@@ -80,6 +80,7 @@ public class WebSocketServer
             var ret = new WebSocketClient(tcpClient);
             _webSocketClients.Add(ret);
             OnClientConnected?.Invoke(ret);
+            ret.Open();
         }
         else
         {

@@ -10,9 +10,12 @@ webSocketServer.OnClientConnected += (WebSocketClient client) =>
 {
     client.OnMessageReceived += (WebSocketClient client, byte[] message)=>
     {
-        Console.WriteLine(System.Text.Encoding.UTF8.GetString(message));
+        
+        var str = System.Text.Encoding.UTF8.GetString(message);
+        Console.WriteLine(str);
+        client.SendMessageAsync($"server recive : {str}");
+
     };
-    client.StartReceiving();
 };
 
 webSocketServer.Start();

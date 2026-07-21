@@ -1,126 +1,185 @@
-using System.ComponentModel;
-using System.Net;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using LHZ.WebSocket.Server.Enums;
 
 namespace LHZ.WebSocket.Server.Core;
 
-/// <summary>
-/// DataFrame class represents a WebSocket data frame and provides methods to read and parse the frame from a stream.
-/// It handles the WebSocket frame header, payload length, masking key, and payload data according to the WebSocket protocol specification (RFC 6455).
-/// </summary>
 public class DataFrame
-{
-    private readonly Stream _stream;
-    private ulong _payloadLength;
-    private ulong _readLength;
-    private byte[] _maskingKey;
-    /// <summary>
-    /// Initializes a new instance of the DataFrame class by reading and parsing a Web
-    /// </summary>
-    /// <param name="stream">The stream to read the data frame from.</param>
-    public DataFrame(Stream stream)
+{          
+    // 0 1 2 3 4 5 6 7 
+    //+-+-+-+-+-------+
+    //|F|R|R|R| opcode|
+    //|I|S|S|S|  (4)  |
+    //|N|V|V|V|       |
+    //| |1|2|3|       |
+    //+-+-+-+-+-------+
+    private byte _dataDataFrameFlag;
+    private byte[]? _maskingKey;
+    private ArraySegment<byte> _data;
+    private DataFrame(bool FIN, bool RSV1, bool RSV2, bool RSV3, Opcode opcode, byte[]? maskingKey, ArraySegment<byte> data)
     {
-        _stream = stream;
-        Init();
-    }
-    private byte[] StreamReadExact(int count)
-    {
-        byte[] buffer = new byte[count];
-        int bytesReadTotal = 0;
-        while (bytesReadTotal < count)
+        _data = data;
+        if(FIN)
         {
-            int bytesRead = _stream.Read(buffer, bytesReadTotal, count - bytesReadTotal);
-            if (bytesRead == 0)
-                throw new EndOfStreamException("Stream closed while reading data frame.");
-            bytesReadTotal += bytesRead;
+            _dataDataFrameFlag |= 0x80;
         }
-        return buffer;
-    }
-    private uint BytesToUnin32(byte[] bytes)
-    {
-        return ((uint)bytes[0]<<24) 
-        | ((uint)bytes[1]<<16) 
-        | ((uint)bytes[2]<<8) 
-        | (uint)bytes[3];
-    }
-    private ulong BytesToUnin64(byte[] bytes)
-    {
-        return ((ulong)bytes[0]<<56) 
-        | ((ulong)bytes[1]<<48) 
-        | ((ulong)bytes[2]<<40) 
-        | ((ulong)bytes[3]<<32) 
-        | ((ulong)bytes[4]<<24) 
-        | ((ulong)bytes[5]<<16) 
-        | ((ulong)bytes[6]<<8) 
-        | (ulong)bytes[7];
-    }
-    private ushort BytesToUnin16(byte[] bytes)
-    {
-        return (ushort)(((ushort)bytes[0]<<8) | (ushort)bytes[1]);
-    }
-    private void Init()
-    {
-        var header = StreamReadExact(4);
-        _dataFrameHeader = BytesToUnin32(header);
-        byte payloadLengthBase = PayloadLengthBase;
-        if (payloadLengthBase <= 125)
+        if(RSV1)
         {
-            _payloadLength = payloadLengthBase;
-            if (Masked)
+            _dataDataFrameFlag |= 0x40;
+        }
+        if(RSV2)
+        {
+            _dataDataFrameFlag |= 0x20;
+        }
+        if(RSV3)
+        {
+            _dataDataFrameFlag |= 0x10;
+        }
+        _dataDataFrameFlag |= (byte)opcode;
+        if(maskingKey != null && maskingKey.Length != 4)
+        {
+            throw new ArgumentException(nameof(maskingKey) + " is error data");
+        }
+        _maskingKey = maskingKey;
+        if (_maskingKey != null)
+        {
+            int offset = data.Offset;
+            var array = data.Array ?? Array.Empty<byte>();
+            for (int i = offset; i < data.Offset + data.Count; i++)
             {
-                _maskingKey = new byte[4];
-                _maskingKey[0] = (byte)((_dataFrameHeader >> 8) & 0xFF);
-                _maskingKey[1] = (byte)(_dataFrameHeader & 0xFF);
-                var maskKey = StreamReadExact(2);
-                _maskingKey[2] = maskKey[0];
-                _maskingKey[3] = maskKey[1];
+                array[i] ^= _maskingKey[(i - offset) % 4];
+            }
+        }
+    }
+    private DataFrame(byte dataDataFrameFlag, byte[]? maskingKey, ArraySegment<byte> data)
+    {
+        _data = data;
+        _dataDataFrameFlag = dataDataFrameFlag;
+        if(maskingKey != null && maskingKey.Length != 4)
+        {
+            throw new ArgumentException(nameof(maskingKey) + " is error data");
+        }
+        _maskingKey = maskingKey;
+        if (_maskingKey != null)
+        {
+            int offset = data.Offset;
+            var array = data.Array ?? Array.Empty<byte>();
+            for (int i = offset; i < data.Offset + data.Count; i++)
+            {
+                array[i] ^= _maskingKey[(i - offset) % 4];
+            }
+        }
+    }
+    internal static DataFrame CreateDataFrame(byte dataDataFrameFlag, byte[]? maskingKey, byte[] data)
+    {
+        var dataArray = new ArraySegment<byte>(data);
+        return new DataFrame(dataDataFrameFlag, maskingKey, dataArray);
+    }
+    public static DataFrame CreateDataFrame(Opcode opcode, bool FIN, byte[]? maskingKey, byte[] data)
+    {
+        var dataArray = new ArraySegment<byte>(data);
+        return new DataFrame(FIN, false, false, false, opcode, maskingKey, dataArray);
+    }
+    /// <summary>
+    /// Create DataDataFrame by Stream
+    /// </summary>
+    /// <param name="opcode">OpCode</param>
+    /// <param name="MaskingKey">MaskingKey</param>
+    /// <param name="data">DataStream</param>
+    /// <returns></returns>
+    public static IEnumerable<DataFrame> CreateDataFrame(Opcode opcode, byte[]? maskingKey, Stream data, int dataDataFrameLength = ushort.MaxValue)
+    {
+        byte[] bytes = new byte[dataDataFrameLength];
+        int readNums = 0;
+        while(true)
+        {
+            int curReadNums = data.Read(bytes, readNums, dataDataFrameLength - readNums);
+            //Read Finish
+            if(curReadNums == 0)     
+            {
+                yield return new DataFrame(true, false, false, false, opcode, maskingKey, new ArraySegment<byte>(bytes, 0, readNums));
+                yield break;
+            }
+            readNums += curReadNums;
+            if(readNums == dataDataFrameLength)
+            {
+                yield return new DataFrame(false, false, false, false, opcode, maskingKey, new ArraySegment<byte>(bytes));
+                opcode = Opcode.Continuation;
+                bytes = new byte[dataDataFrameLength];
+                readNums = 0;
+            }
+        }
+    }
+    public bool FIN => _dataDataFrameFlag >> 7 == 1;
+    public bool RSV1 => (_dataDataFrameFlag & 0x40) == 0x40;
+    public bool RSV2 => (_dataDataFrameFlag & 0x20) == 0x20;
+    public bool RSV3 => (_dataDataFrameFlag & 0x10) == 0x10;
+    public Opcode Opcode => (Opcode)(_dataDataFrameFlag & 0x0F);
+    public bool Masked => _maskingKey != null;
+    public byte[]? MaskingKey => _maskingKey;
+    public byte DataDataFrameFlag => _dataDataFrameFlag;
+    public byte[] DataFrameHeader
+    {
+        get
+        {
+            int length = 2;
+            if(Masked)
+            {
+                length += 4;
+            }
+            byte[] header;
+            if(_data.Count > ushort.MaxValue)
+            {
+                length += 8;
+                header = new byte[length];
+                header[0] = _dataDataFrameFlag;
+                header[1] = 126;
+                header[6] = (byte)((_data.Count >> 24) & 0xFF);
+                header[7] = (byte)((_data.Count >> 16) & 0xFF);
+                header[8] = (byte)((_data.Count >> 8) & 0xFF);
+                header[9] = (byte)((_data.Count) & 0xFF);
+                if (_maskingKey != null)
+                {
+                    header[1] |= 0x80;
+                    header[10] = _maskingKey[0];
+                    header[11] = _maskingKey[1];
+                    header[12] = _maskingKey[2];
+                    header[13] = _maskingKey[3];
+                }
+                return header;
+            }
+            if(_data.Count > 125)
+            {
+                length += 2;
+                header = new byte[length];
+                header[0] = _dataDataFrameFlag;
+                header[1] = 125;
+                header[2] = (byte)((_data.Count >> 8) & 0xFF);
+                header[3] = (byte)((_data.Count) & 0xFF);
+                if (_maskingKey != null)
+                {
+                    header[1] |= 0x80;
+                    header[4] = _maskingKey[0];
+                    header[5] = _maskingKey[1];
+                    header[6] = _maskingKey[2];
+                    header[7] = _maskingKey[3];
+                }
+                return header;
+            }
+            header = new byte[length];
+            header[0] = _dataDataFrameFlag;
+            header[1] = (byte)Data.Count;
+            if(_maskingKey != null)
+            {
+                header[1] |= 0x80;
+                header[2] = _maskingKey[0];
+                header[3] = _maskingKey[1];
+                header[4] = _maskingKey[2];
+                header[5] = _maskingKey[3];
 
             }
-            return;
-        }
-        if (payloadLengthBase == 126)
-        {
-            _payloadLength = _dataFrameHeader & 0x0000FFFFu;
-        }
-        else if(payloadLengthBase == 127)
-        {
-            var extendedPayloadLength = StreamReadExact(6);
-            extendedPayloadLength = new byte[] { (byte)((_dataFrameHeader >> 8) & _dataFrameHeader & 0xFF), 0 }.Concat(extendedPayloadLength).ToArray();
-            _payloadLength = BytesToUnin64(extendedPayloadLength);
-        }
-        if(Masked)
-        {
-            _maskingKey = StreamReadExact(4);
+            return header;
         }
     }
-    public byte[] _dataFrame;
-    private uint _dataFrameHeader;
-    public bool FIN => _dataFrameHeader >> 31 == 1;
-    public bool RSV1 => (_dataFrameHeader & 0x40000000u) == 0x40000000u;
-    public bool RSV2 => (_dataFrameHeader & 0x20000000u) == 0x20000000u;
-    public bool RSV3 => (_dataFrameHeader & 0x10000000u) == 0x10000000u;
-    public Opcode Opcode => (Opcode)((_dataFrameHeader >> 24) & 0x0Fu);
-    public bool Masked => (_dataFrameHeader & 0x00800000u) == 0x00800000u;
-    private byte PayloadLengthBase => (byte)((_dataFrameHeader >> 16) & 0x7Fu);
-    public ulong PayloadLength => _payloadLength;
-    public byte[] MaskingKey =>_maskingKey;
-    public int Read(byte[] buffer, int offset, int count)
-    {
-        count = _payloadLength - _readLength > (ulong)count ? count : (int)(_payloadLength - _readLength);
-        if (count == 0)
-        {
-            return 0;
-        }
-        int readNums = _stream.Read(buffer, offset, count);
-        if (!Masked)
-        {
-            return readNums;
-        }
-        for (int i = 0; i < readNums; i++)
-        {
-            buffer[offset + i] ^= _maskingKey[_readLength++ % 4];
-        }
-        return readNums;
-    }
+    public ArraySegment<byte> Data => _data;
 }
