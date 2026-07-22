@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading.Channels;
 using LHZ.WebSocket.Server.Core;
@@ -7,38 +8,52 @@ using LHZ.WebSocket.Server.Enums;
 
 namespace LHZ.WebSocket.Server;
 
-public sealed class WebSocketClient : IDisposable
+public class WebSocketClient : IDisposable
 {
     private readonly TcpClient _tcpClient;
     private readonly NetworkStream _networkStream;
-    private readonly Channel<DataFrame> _channel = Channel.CreateBounded<DataFrame>(512);
-    public event Action<WebSocketClient, byte[]>? OnMessageReceived;
+    private readonly Channel<DataFrame> _channel = Channel.CreateBounded<DataFrame>(1024);
+    private readonly CancellationTokenSource _cts = new CancellationTokenSource();
+    public event EventHandler<WebSocketClient, string>? OnMessageReceived;
+     public event EventHandler<WebSocketClient, byte[]>? OnBytesReceived;
+    public event EventHandler<WebSocketClient, CloseMessage>? OnCloseRecived;
+
     public event Action<WebSocketClient>? OnClientClose;
-    public bool _isOpen = false;
-    public bool IsOpen => _isOpen;
+    public ClientStatus _clientStatus = ClientStatus.Wait;
+    public ClientStatus Status => _clientStatus;
     public WebSocketClient(TcpClient tcpClient)
     {
         _tcpClient = tcpClient;
         _networkStream = tcpClient.GetStream();
     }
-    public ValueTask SendMessageAsync(string message)
+    public void SendMessage(string message)
     {
-        return SendAsync(Opcode.Text, System.Text.Encoding.UTF8.GetBytes(message));
+        Send(OpCode.Text, System.Text.Encoding.UTF8.GetBytes(message));
     }
-    public ValueTask SendAsync(Opcode opcode, byte[] bytes)
+    public void Send(OpCode opcode, byte[] bytes)
     {
         var dataFrame = DataFrame.CreateDataFrame(opcode, true, null, bytes);
-        return _channel.Writer.WriteAsync(dataFrame);
+        _channel.Writer.WriteAsync(dataFrame).GetAwaiter().GetResult();
     }
-    public WebSocketClient Open()
+    public void Open()
     {
-        if(!_isOpen)
+        if(_clientStatus == ClientStatus.Wait)
         {
-            _isOpen = true;
+            _clientStatus = ClientStatus.Opend;
             StartReceiving();
             StartSending();
         }
-        return this;
+    }
+    public void Close()
+    {
+        if (_clientStatus == ClientStatus.Close)
+        {
+            return;
+        }
+        _cts.Cancel();
+        _tcpClient.Dispose();
+        _clientStatus = ClientStatus.Close;
+        OnClientClose?.Invoke(this);
     }
     public void StartReceiving()
     {
@@ -47,38 +62,75 @@ public sealed class WebSocketClient : IDisposable
             try
             {
                 var dataFrameReader = new DataFrameReader(_networkStream);
-                List<byte[]> bytes = new List<byte[]>();
-                foreach(var item in dataFrameReader.Read())
+                List<DataFrame> dataFrames = new List<DataFrame>();
+                await foreach(var item in dataFrameReader.ReadAsync(_cts.Token))
                 {
-                    var ret = item.Data.ToArray();
-                    bytes.Add(ret);
+                    if(_cts.Token.IsCancellationRequested)
+                    {
+                        break;
+                    }
                     if(item.FIN)
                     {
-                        if(bytes.Count == 1)
+                        if(dataFrames.Count == 0)
                         {
-                            OnMessageReceived?.Invoke(this, ret);
-                            bytes.Clear();
+                            MessageProcessing(item.Opcode, item.Data.ToArray());
                             continue;
                         }
-                        int count = bytes.Sum(n=>n.Length);
-                        ret = new byte[count];
+                        dataFrames.Add(item);
+
+                        int count = dataFrames.Sum(n=>n.Data.Count);
+                        var bytes = new byte[count];
                         int offset = 0;
-                        foreach(var array in bytes)
+                        foreach(var dataFrame in dataFrames)
                         {
-                            Array.Copy(array, 0, ret, offset, array.Length);
-                            offset += array.Length;
+                            Array.Copy(dataFrame.Data.ToArray(), 0, bytes, offset, dataFrame.Data.Count);
+                            offset += dataFrame.Data.Count;
                         }
-                        OnMessageReceived?.Invoke(this, ret);
-                        bytes.Clear();
+                        MessageProcessing(dataFrames[0].Opcode, bytes);
+                        dataFrames.Clear();
                     }
+                    dataFrames.Add(item);
                 }
             }
             catch (Exception ex)
             {
-                _tcpClient.Close();
                 Console.WriteLine($"Error receiving data: {ex.Message}");
             }
         });
+    }
+    protected virtual void MessageProcessing(OpCode opCode, byte[] data)
+    {
+        switch (opCode)
+        {
+            case OpCode.Binary: OnBytesReceived?.Invoke(this, data); break;
+            case OpCode.Close:
+                {
+                    if (data.Length < 2)
+                        throw new Exception("Close Frame has Error");
+                    CloseCode closeCode = (CloseCode)((data[0] << 8) | data[1]);
+                    if (!Enum.IsDefined<CloseCode>(closeCode))
+                        throw new Exception("CloseCode has not define");
+                    var closeMessage = new CloseMessage(closeCode, Encoding.UTF8.GetString(data, 2, data.Length - 2));
+                    OnCloseRecived?.Invoke(this, closeMessage);
+                    break;
+                }
+            case OpCode.Text:
+                {
+                    var str = System.Text.Encoding.UTF8.GetString(data);
+                    OnMessageReceived?.Invoke(this, str); break;
+                }
+            case OpCode.Ping:
+                {
+                    //TODO
+                    throw new Exception("Not Support");
+                }
+            case OpCode.Pong:
+                {
+                    //TODO
+                    throw new Exception("Not Support");
+                }
+            default: throw new Exception("OpCode not Support");
+        }
     }
     public void StartSending()
     {
@@ -86,25 +138,22 @@ public sealed class WebSocketClient : IDisposable
         {
             try
             {
-                while(true)
+                while (!_cts.Token.IsCancellationRequested)
                 {
-                    var dataFrame = await _channel.Reader.ReadAsync();
-                    await _networkStream.WriteAsync(dataFrame.DataFrameHeader);
-                    await _networkStream.WriteAsync(dataFrame.Data);
-                    await _networkStream.FlushAsync();
+                    var dataFrame = await _channel.Reader.ReadAsync(_cts.Token);
+                    await _networkStream.WriteAsync(dataFrame.DataFrameHeader, _cts.Token);
+                    await _networkStream.WriteAsync(dataFrame.Data, _cts.Token);
+                    await _networkStream.FlushAsync(_cts.Token);
                 }
             }
             catch (Exception ex)
             {
-                _tcpClient.Close();
                 Console.WriteLine($"Error Sending data: {ex.Message}");
             }
         });
     }
-
     public void Dispose()
     {
-        _tcpClient.Client.Close();
-        _tcpClient.Dispose();
+        Close();
     }
 }

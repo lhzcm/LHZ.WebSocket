@@ -16,7 +16,7 @@ public class DataFrame
     private byte _dataDataFrameFlag;
     private byte[]? _maskingKey;
     private ArraySegment<byte> _data;
-    private DataFrame(bool FIN, bool RSV1, bool RSV2, bool RSV3, Opcode opcode, byte[]? maskingKey, ArraySegment<byte> data)
+    private DataFrame(bool FIN, bool RSV1, bool RSV2, bool RSV3, OpCode opcode, byte[]? maskingKey, ArraySegment<byte> data)
     {
         _data = data;
         if(FIN)
@@ -75,7 +75,7 @@ public class DataFrame
         var dataArray = new ArraySegment<byte>(data);
         return new DataFrame(dataDataFrameFlag, maskingKey, dataArray);
     }
-    public static DataFrame CreateDataFrame(Opcode opcode, bool FIN, byte[]? maskingKey, byte[] data)
+    public static DataFrame CreateDataFrame(OpCode opcode, bool FIN, byte[]? maskingKey, byte[] data)
     {
         var dataArray = new ArraySegment<byte>(data);
         return new DataFrame(FIN, false, false, false, opcode, maskingKey, dataArray);
@@ -87,7 +87,7 @@ public class DataFrame
     /// <param name="MaskingKey">MaskingKey</param>
     /// <param name="data">DataStream</param>
     /// <returns></returns>
-    public static IEnumerable<DataFrame> CreateDataFrame(Opcode opcode, byte[]? maskingKey, Stream data, int dataDataFrameLength = ushort.MaxValue)
+    public static IEnumerable<DataFrame> CreateDataFrame(OpCode opcode, byte[]? maskingKey, Stream data, int dataDataFrameLength = ushort.MaxValue)
     {
         byte[] bytes = new byte[dataDataFrameLength];
         int readNums = 0;
@@ -104,7 +104,7 @@ public class DataFrame
             if(readNums == dataDataFrameLength)
             {
                 yield return new DataFrame(false, false, false, false, opcode, maskingKey, new ArraySegment<byte>(bytes));
-                opcode = Opcode.Continuation;
+                opcode = OpCode.Continuation;
                 bytes = new byte[dataDataFrameLength];
                 readNums = 0;
             }
@@ -114,7 +114,7 @@ public class DataFrame
     public bool RSV1 => (_dataDataFrameFlag & 0x40) == 0x40;
     public bool RSV2 => (_dataDataFrameFlag & 0x20) == 0x20;
     public bool RSV3 => (_dataDataFrameFlag & 0x10) == 0x10;
-    public Opcode Opcode => (Opcode)(_dataDataFrameFlag & 0x0F);
+    public OpCode Opcode => (OpCode)(_dataDataFrameFlag & 0x0F);
     public bool Masked => _maskingKey != null;
     public byte[]? MaskingKey => _maskingKey;
     public byte DataDataFrameFlag => _dataDataFrameFlag;
@@ -133,7 +133,7 @@ public class DataFrame
                 length += 8;
                 header = new byte[length];
                 header[0] = _dataDataFrameFlag;
-                header[1] = 126;
+                header[1] = 127;
                 header[6] = (byte)((_data.Count >> 24) & 0xFF);
                 header[7] = (byte)((_data.Count >> 16) & 0xFF);
                 header[8] = (byte)((_data.Count >> 8) & 0xFF);
@@ -153,7 +153,7 @@ public class DataFrame
                 length += 2;
                 header = new byte[length];
                 header[0] = _dataDataFrameFlag;
-                header[1] = 125;
+                header[1] = 126;
                 header[2] = (byte)((_data.Count >> 8) & 0xFF);
                 header[3] = (byte)((_data.Count) & 0xFF);
                 if (_maskingKey != null)

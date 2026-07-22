@@ -1,4 +1,5 @@
 ﻿using LHZ.WebSocket.Server;
+using LHZ.WebSocket.Server.Core;
 using LHZ.WebSocket.Server.Http;
 
 WebSocketServer webSocketServer = new WebSocketServer(5000);
@@ -8,13 +9,15 @@ webSocketServer.OnUpgradeRequest += (HttpContext headers) =>
 };
 webSocketServer.OnClientConnected += (WebSocketClient client) =>
 {
-    client.OnMessageReceived += (WebSocketClient client, byte[] message)=>
+    client.OnMessageReceived += (WebSocketClient sender, string message)=>
     {
-        
-        var str = System.Text.Encoding.UTF8.GetString(message);
-        Console.WriteLine(str);
-        client.SendMessageAsync($"server recive : {str}");
-
+        Console.WriteLine(message);
+        client.SendMessage($"server recive : {message}");
+    };
+    client.OnCloseRecived += (WebSocketClient sender, CloseMessage message) =>
+    {
+        Console.WriteLine(message);
+        sender.Close();
     };
 };
 

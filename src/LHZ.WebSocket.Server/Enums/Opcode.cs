@@ -1,5 +1,5 @@
 namespace LHZ.WebSocket.Server.Enums;
-public enum Opcode : byte
+public enum OpCode : byte
 {
     Continuation = 0x0,
     Text = 0x1,
