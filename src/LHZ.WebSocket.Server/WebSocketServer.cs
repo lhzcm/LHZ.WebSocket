@@ -3,22 +3,52 @@ using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
+using LHZ.WebSocket.Server.Enums;
 using LHZ.WebSocket.Server.Http;
 
 namespace LHZ.WebSocket.Server;
 
+/// <summary>
+/// A lightweight WebSocket server that accepts TCP connections,
+/// handles the HTTP upgrade handshake, and manages connected clients.
+/// </summary>
 public class WebSocketServer
 {
-    IPAddress _ip;
-    int _port;
-    public event Func<HttpContext, bool>? OnUpgradeRequest;
+    private IPAddress _ip;
+    private int _port;
+    private ServerStatus _serverStatus = ServerStatus.Ready;
+
+    /// <summary>Raised when an HTTP upgrade request is received, before the handshake completes.</summary>
+    public event Action<HttpContext>? OnUpgradeRequest;
+
+    /// <summary>Raised after a client completes the WebSocket handshake and is ready.</summary>
     public event Action<WebSocketClient>? OnClientConnected;
-    private static readonly System.Collections.Concurrent.ConcurrentBag<WebSocketClient> _webSocketClients = new System.Collections.Concurrent.ConcurrentBag<WebSocketClient>();
+
+    private static readonly HashSet<WebSocketClient> _webSocketClients = new HashSet<WebSocketClient>();
+    private CancellationTokenSource? _cancellationTokenSource;
+    private Task? _task;
+
+    /// <summary>Current number of connected clients.</summary>
+    public int ClientNums => _webSocketClients.Count;
+
+    /// <summary>Snapshot of all currently connected clients.</summary>
+    public IEnumerable<WebSocketClient> WebSocketClients
+    {
+        get
+        {
+            lock (this)
+            {
+                return _webSocketClients.ToArray();
+            }
+        }
+    }
+
     public WebSocketServer(IPAddress ip, int port)
     {
         _ip = ip;
         _port = port;
     }
+
     public WebSocketServer(int port)
     {
         _ip = IPAddress.Any;
@@ -30,61 +60,81 @@ public class WebSocketServer
     /// </summary>
     public void Start()
     {
-        TcpListener listener = new TcpListener(_ip, _port);
-        listener.Start();
-        while (true)
+        if (_serverStatus == ServerStatus.Ready || _serverStatus == ServerStatus.Closed)
         {
-            TcpClient tcpClient = listener.AcceptTcpClient();
-            Task.Run(() =>
-            {
-                HttpUpgradeHandler(tcpClient);
-            });
+            _serverStatus = ServerStatus.Start;
+            _cancellationTokenSource = new CancellationTokenSource();
+            _task = StartWithNewTask(_cancellationTokenSource.Token);
         }
     }
 
-    private void HttpUpgradeHandler(TcpClient tcpClient)
+    /// <summary>
+    /// Main accept loop: waits for TCP connections, parses HTTP upgrade requests,
+    /// and fires <see cref="OnUpgradeRequest"/> for each incoming client.
+    /// </summary>
+    private async Task StartWithNewTask(CancellationToken cancellationToken)
     {
-        NetworkStream networkStream = tcpClient.GetStream();
-
-        // Parse the HTTP upgrade request from the stream
-        var httpRequest = new HttpRequest(networkStream);
-        HttpContext httpContent = new HttpContext(httpRequest);
-        if (OnUpgradeRequest?.Invoke(httpContent) == true)
+        TcpListener? listener = null;
+        try
         {
-            var responseHeaders = new Dictionary<string, string>();
-            responseHeaders.Add("Upgrade", "websocket");
-            responseHeaders.Add("Connection", "Upgrade");
+            listener = new TcpListener(_ip, _port);
+            listener.Start();
 
-            string secWebSocketKey = httpContent.Request.Headers.GetValues("Sec-WebSocket-Key").First()
-                ?? throw new InvalidOperationException("Missing Sec-WebSocket-Key header.");
-
-            var sha1 = Convert.ToBase64String(
-                SHA1.HashData(
-                    System.Text.Encoding.UTF8.GetBytes(
-                        secWebSocketKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
-
-            responseHeaders.Add("Sec-WebSocket-Accept", sha1);
-
-            networkStream.Write(System.Text.Encoding.UTF8.GetBytes("HTTP/1.1 101 Switching Protocols\n"));
-            var headersStrBuild = new StringBuilder();
-            foreach(var item in responseHeaders)
+            while (!cancellationToken.IsCancellationRequested)
             {
-                headersStrBuild.Append(item.Key);
-                headersStrBuild.Append(":");
-                headersStrBuild.Append(item.Value);
-                headersStrBuild.Append("\n");
+                TcpClient tcpClient = await listener.AcceptTcpClientAsync(cancellationToken);
+                try
+                {
+                    using (var httpContext = HttpContext.GetHttpContext(this, tcpClient))
+                    {
+                        OnUpgradeRequest?.Invoke(httpContext);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(ex.Message + ex.StackTrace);
+                }
             }
-            headersStrBuild.Append("\n");
-            networkStream.Write(System.Text.Encoding.UTF8.GetBytes(headersStrBuild.ToString()));
-            networkStream.Flush();
-            var ret = new WebSocketClient(tcpClient);
-            _webSocketClients.Add(ret);
-            OnClientConnected?.Invoke(ret);
-            ret.Open();
         }
-        else
+        catch (Exception ex)
         {
-            tcpClient.Close();
+            Console.WriteLine(ex.Message + ex.StackTrace);
+        }
+        listener?.Dispose();
+        _serverStatus = ServerStatus.Closed;
+    }
+
+    /// <summary>
+    /// Closes all client connections and stops the accept loop.
+    /// </summary>
+    public void Stop()
+    {
+        if (_serverStatus != ServerStatus.Start)
+            return;
+        _serverStatus = ServerStatus.Closing;
+        foreach (var item in WebSocketClients)
+        {
+            item.Close();
+        }
+        _cancellationTokenSource!.Cancel();
+    }
+
+    /// <summary>Registers a newly upgraded client and subscribes to its close event.</summary>
+    internal void OnClientConnect(WebSocketClient client)
+    {
+        lock (this)
+        {
+            client.OnClientClose += OnClientClose;
+            _webSocketClients.Add(client);
+        }
+    }
+
+    /// <summary>Removes a disconnected client from the active set.</summary>
+    internal void OnClientClose(WebSocketClient client)
+    {
+        lock (this)
+        {
+            _webSocketClients.Remove(client);
         }
     }
 }

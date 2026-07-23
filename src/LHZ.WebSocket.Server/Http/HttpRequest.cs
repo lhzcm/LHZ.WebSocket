@@ -11,10 +11,6 @@ namespace LHZ.WebSocket.Server.Http;
 /// </summary>
 public sealed class HttpRequest
 {
-    private class HttpRequestHeader : HttpHeaders
-    {
-    }
-
     private readonly NetworkStream _stream;
 
     /// <summary>
@@ -35,12 +31,12 @@ public sealed class HttpRequest
     /// <summary>
     /// Parsed request headers (case-insensitive keys).
     /// </summary>
-    public HttpHeaders Headers { get; private set; }
+    public System.Net.Http.Headers.HttpHeaders Headers { get; private set; }
 
     public HttpRequest(NetworkStream stream)
     {
         _stream = stream;
-        Headers = new HttpRequestHeader();
+        Headers = new HttpHeaders();
         Parse();
     }
 

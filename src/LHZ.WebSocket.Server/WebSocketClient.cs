@@ -8,42 +8,82 @@ using LHZ.WebSocket.Server.Enums;
 
 namespace LHZ.WebSocket.Server;
 
+/// <summary>
+/// Represents a single WebSocket client connection.
+/// Manages frame-level send/receive with separate reader and writer background tasks.
+/// </summary>
 public class WebSocketClient : IDisposable
 {
     private readonly TcpClient _tcpClient;
     private readonly NetworkStream _networkStream;
-    private readonly Channel<DataFrame> _channel = Channel.CreateBounded<DataFrame>(1024);
+
+    /// <summary>Bounded channel for outgoing data frames (producer-consumer).</summary>
+    private readonly Channel<DataFrame> _channel;
+
     private readonly CancellationTokenSource _cts = new CancellationTokenSource();
+
+    /// <summary>Raised when a complete text message is received.</summary>
     public event EventHandler<WebSocketClient, string>? OnMessageReceived;
-     public event EventHandler<WebSocketClient, byte[]>? OnBytesReceived;
+
+    /// <summary>Raised when a complete binary message is received.</summary>
+    public event EventHandler<WebSocketClient, byte[]>? OnBytesReceived;
+
+    /// <summary>Raised when a close frame is received from the peer.</summary>
     public event EventHandler<WebSocketClient, CloseMessage>? OnCloseRecived;
 
+    /// <summary>Raised when this client disconnects (local or remote).</summary>
     public event Action<WebSocketClient>? OnClientClose;
-    public ClientStatus _clientStatus = ClientStatus.Wait;
+
+    public ClientStatus _clientStatus = ClientStatus.Connection;
+
+    /// <summary>Current connection status.</summary>
     public ClientStatus Status => _clientStatus;
+
+    public WebSocketClient(TcpClient tcpClient, int capacity)
+    {
+        _tcpClient = tcpClient;
+        _networkStream = tcpClient.GetStream();
+        _channel = Channel.CreateBounded<DataFrame>(capacity);
+    }
+
     public WebSocketClient(TcpClient tcpClient)
     {
         _tcpClient = tcpClient;
         _networkStream = tcpClient.GetStream();
+        _channel = Channel.CreateBounded<DataFrame>(1024);
     }
+
+    /// <summary>Sends a UTF-8 text message to the peer.</summary>
     public void SendMessage(string message)
     {
         Send(OpCode.Text, System.Text.Encoding.UTF8.GetBytes(message));
     }
-    public void Send(OpCode opcode, byte[] bytes)
+
+    /// <summary>Sends raw binary data to the peer.</summary>
+    public void SendByte(byte[] bytes)
     {
-        var dataFrame = DataFrame.CreateDataFrame(opcode, true, null, bytes);
+        Send(OpCode.Binary, bytes);
+    }
+
+    /// <summary>Enqueues a data frame onto the outgoing channel.</summary>
+    private void Send(OpCode opCode, byte[] bytes)
+    {
+        var dataFrame = DataFrame.CreateDataFrame(opCode, true, null, bytes);
         _channel.Writer.WriteAsync(dataFrame).GetAwaiter().GetResult();
     }
+
+    /// <summary>Starts the reader and sender background tasks.</summary>
     public void Open()
     {
-        if(_clientStatus == ClientStatus.Wait)
+        if (_clientStatus == ClientStatus.Connection)
         {
             _clientStatus = ClientStatus.Opend;
-            StartReceiving();
-            StartSending();
+            StartReceiver();
+            StartSender();
         }
     }
+
+    /// <summary>Cancels background tasks and disposes the underlying TCP connection.</summary>
     public void Close()
     {
         if (_clientStatus == ClientStatus.Close)
@@ -55,7 +95,12 @@ public class WebSocketClient : IDisposable
         _clientStatus = ClientStatus.Close;
         OnClientClose?.Invoke(this);
     }
-    public void StartReceiving()
+
+    /// <summary>
+    /// Background task that continuously reads WebSocket frames from the network stream,
+    /// reassembles fragmented messages, and dispatches them via <see cref=\"ReceiveProcessing\"/>.
+    /// </summary>
+    private void StartReceiver()
     {
         Task.Run(async () =>
         {
@@ -63,30 +108,32 @@ public class WebSocketClient : IDisposable
             {
                 var dataFrameReader = new DataFrameReader(_networkStream);
                 List<DataFrame> dataFrames = new List<DataFrame>();
-                await foreach(var item in dataFrameReader.ReadAsync(_cts.Token))
+                await foreach (var item in dataFrameReader.ReadAsync(_cts.Token))
                 {
-                    if(_cts.Token.IsCancellationRequested)
+                    if (_cts.Token.IsCancellationRequested)
                     {
                         break;
                     }
-                    if(item.FIN)
+                    // FIN frame received — either a single-frame message or end of a fragmented message
+                    if (item.FIN)
                     {
-                        if(dataFrames.Count == 0)
+                        if (dataFrames.Count == 0)
                         {
-                            MessageProcessing(item.Opcode, item.Data.ToArray());
+                            ReceiveProcessing(item.Opcode, item.RSV1, item.RSV2, item.RSV3, item.Data.ToArray());
                             continue;
                         }
                         dataFrames.Add(item);
 
-                        int count = dataFrames.Sum(n=>n.Data.Count);
+                        // Concatenate all continuation frames into one payload
+                        int count = dataFrames.Sum(n => n.Data.Count);
                         var bytes = new byte[count];
                         int offset = 0;
-                        foreach(var dataFrame in dataFrames)
+                        foreach (var dataFrame in dataFrames)
                         {
                             Array.Copy(dataFrame.Data.ToArray(), 0, bytes, offset, dataFrame.Data.Count);
                             offset += dataFrame.Data.Count;
                         }
-                        MessageProcessing(dataFrames[0].Opcode, bytes);
+                        ReceiveProcessing(dataFrames[0].Opcode, dataFrames[0].RSV1, dataFrames[0].RSV2, dataFrames[0].RSV3, bytes);
                         dataFrames.Clear();
                     }
                     dataFrames.Add(item);
@@ -95,10 +142,16 @@ public class WebSocketClient : IDisposable
             catch (Exception ex)
             {
                 Console.WriteLine($"Error receiving data: {ex.Message}");
+                Close();
             }
         });
     }
-    protected virtual void MessageProcessing(OpCode opCode, byte[] data)
+
+    /// <summary>
+    /// Dispatches a fully reassembled message to the appropriate event handler based on opcode.
+    /// Override to customize ping/pong handling.
+    /// </summary>
+    protected virtual void ReceiveProcessing(OpCode opCode, bool RSV1, bool RSV2, bool RSV3, byte[] data)
     {
         switch (opCode)
         {
@@ -107,6 +160,7 @@ public class WebSocketClient : IDisposable
                 {
                     if (data.Length < 2)
                         throw new Exception("Close Frame has Error");
+                    // First two bytes = close status code (big-endian)
                     CloseCode closeCode = (CloseCode)((data[0] << 8) | data[1]);
                     if (!Enum.IsDefined<CloseCode>(closeCode))
                         throw new Exception("CloseCode has not define");
@@ -121,18 +175,34 @@ public class WebSocketClient : IDisposable
                 }
             case OpCode.Ping:
                 {
-                    //TODO
-                    throw new Exception("Not Support");
+                    PingProcessing(data);
+                    break;
                 }
             case OpCode.Pong:
                 {
-                    //TODO
-                    throw new Exception("Not Support");
+                    PongProcessing(data);
+                    break;
                 }
             default: throw new Exception("OpCode not Support");
         }
     }
-    public void StartSending()
+
+    /// <summary>Called when a ping frame is received. Override to add custom behavior.</summary>
+    protected virtual void PingProcessing(byte[] data)
+    {
+    }
+
+    /// <summary>Called when a pong frame is received. Default sends an empty pong back.</summary>
+    protected virtual void PongProcessing(byte[] data)
+    {
+        Send(OpCode.Pong, Array.Empty<byte>());
+    }
+
+    /// <summary>
+    /// Background task that dequeues outgoing data frames from the channel
+    /// and writes them to the network stream.
+    /// </summary>
+    private void StartSender()
     {
         Task.Run(async () =>
         {
@@ -149,9 +219,11 @@ public class WebSocketClient : IDisposable
             catch (Exception ex)
             {
                 Console.WriteLine($"Error Sending data: {ex.Message}");
+                Close();
             }
         });
     }
+
     public void Dispose()
     {
         Close();
