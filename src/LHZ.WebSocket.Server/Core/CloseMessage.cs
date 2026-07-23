@@ -1,21 +1,22 @@
 using LHZ.WebSocket.Server.Enums;
 
-namespace LHZ.WebSocket.Server.Core;
-
-/// <summary>
-/// Represents a WebSocket close frame payload: a status code and optional reason string.
-/// </summary>
-public struct CloseMessage
+namespace LHZ.WebSocket.Server.Core
 {
-    public CloseMessage(CloseCode opCode, string message)
+    /// <summary>
+    /// Represents a WebSocket close frame payload: a status code and optional reason string.
+    /// </summary>
+    public struct CloseMessage
     {
-        CloseCode = opCode;
-        Message = message;
+        public CloseMessage(CloseCode opCode, string message)
+        {
+            CloseCode = opCode;
+            Message = message;
+        }
+
+        /// <summary>WebSocket close status code (e.g., 1000 Normal).</summary>
+        public CloseCode CloseCode { get; private set; }
+
+        /// <summary>Optional human-readable close reason.</summary>
+        public string Message { get; private set; }
     }
-
-    /// <summary>WebSocket close status code (e.g., 1000 Normal).</summary>
-    public CloseCode CloseCode { get; private set; }
-
-    /// <summary>Optional human-readable close reason.</summary>
-    public string Message { get; private set; }
 }

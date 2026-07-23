@@ -4,31 +4,6 @@
 
 一个轻量级、零依赖的 .NET WebSocket 服务端库，基于原生 `TcpListener` / `TcpClient` 从零实现 RFC 6455 协议。
 
-## 项目结构
-
-```
-LHZ.WebSocket.Server/
-├── LHZ.WebSocket.Server/              # 核心库
-│   ├── WebSocketServer.cs             # TCP 监听器 & 客户端生命周期管理
-│   ├── WebSocketClient.cs             # 单连接收发管理
-│   ├── Core/
-│   │   ├── CloseMessage.cs            # 关闭帧负载
-│   │   ├── DataFrame.cs               # 数据帧构建 / 解析（RFC 6455 §5.2）
-│   │   └── DataFrameReader.cs         # 从 Stream 读取并解析帧
-│   ├── Enums/
-│   │   ├── ClientStatus.cs            # 客户端生命周期状态
-│   │   ├── CloseCode.cs               # RFC 6455 关闭状态码
-│   │   ├── OpCode.cs                  # 帧操作码
-│   │   └── ServerStatus.cs            # 服务端生命周期状态
-│   └── Http/
-│       ├── HttpContext.cs             # HTTP 升级握手
-│       ├── HttpHeaders.cs             # 内部请求头集合
-│       └── HttpRequest.cs             # HTTP 请求行 & 请求头解析
-├── LHZ.WebSocket.TestConsole/         # Echo 服务端示例
-│   └── Program.cs
-└── test-client.html                   # 浏览器端测试客户端
-```
-
 ## 功能特性
 
 - **零依赖** — 纯 .NET 实现，不依赖任何第三方库
@@ -96,15 +71,6 @@ server.Stop();
 ```csharp
 var server = new WebSocketServer(IPAddress.Loopback, 5000);
 ```
-
-### 4. 运行示例
-
-```bash
-cd src/LHZ.WebSocket.TestConsole
-dotnet run
-```
-
-然后在浏览器中打开 `test-client.html`，点击 **连接**，即可开始发送消息。
 
 ## API 参考
 
@@ -213,6 +179,31 @@ sequenceDiagram
 
 - **Receiver（接收器）** — 通过 `DataFrameReader` 读取帧，重组分片消息，按操作码分发
 - **Sender（发送器）** — 从有界 `Channel<DataFrame>` 中取出帧，将帧头 + 负载写入网络流
+
+## 项目结构
+
+```
+LHZ.WebSocket.Server/
+├── LHZ.WebSocket.Server/              # 核心库
+│   ├── WebSocketServer.cs             # TCP 监听器 & 客户端生命周期管理
+│   ├── WebSocketClient.cs             # 单连接收发管理
+│   ├── Core/
+│   │   ├── CloseMessage.cs            # 关闭帧负载
+│   │   ├── DataFrame.cs               # 数据帧构建 / 解析（RFC 6455 §5.2）
+│   │   └── DataFrameReader.cs         # 从 Stream 读取并解析帧
+│   ├── Enums/
+│   │   ├── ClientStatus.cs            # 客户端生命周期状态
+│   │   ├── CloseCode.cs               # RFC 6455 关闭状态码
+│   │   ├── OpCode.cs                  # 帧操作码
+│   │   └── ServerStatus.cs            # 服务端生命周期状态
+│   └── Http/
+│       ├── HttpContext.cs             # HTTP 升级握手
+│       ├── HttpHeaders.cs             # 内部请求头集合
+│       └── HttpRequest.cs             # HTTP 请求行 & 请求头解析
+├── LHZ.WebSocket.TestConsole/         # Echo 服务端示例
+│   └── Program.cs
+└── test-client.html                   # 浏览器端测试客户端
+```
 
 ## 环境要求
 

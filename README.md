@@ -4,31 +4,6 @@
 
 A lightweight, zero-dependency WebSocket server library for .NET, implementing RFC 6455 from the ground up using raw `TcpListener` / `TcpClient`.
 
-## Project Structure
-
-```
-LHZ.WebSocket.Server/
-├── LHZ.WebSocket.Server/              # Core library
-│   ├── WebSocketServer.cs             # TCP listener & client lifecycle
-│   ├── WebSocketClient.cs             # Per-connection send/receive
-│   ├── Core/
-│   │   ├── CloseMessage.cs            # Close frame payload
-│   │   ├── DataFrame.cs               # Frame builder / parser (RFC 6455 §5.2)
-│   │   └── DataFrameReader.cs         # Frame reader from Stream
-│   ├── Enums/
-│   │   ├── ClientStatus.cs            # Client lifecycle states
-│   │   ├── CloseCode.cs               # RFC 6455 close status codes
-│   │   ├── OpCode.cs                  # Frame opcodes
-│   │   └── ServerStatus.cs            # Server lifecycle states
-│   └── Http/
-│       ├── HttpContext.cs             # HTTP upgrade handshake
-│       ├── HttpHeaders.cs             # Internal header collection
-│       └── HttpRequest.cs             # HTTP request-line & header parser
-├── LHZ.WebSocket.TestConsole/         # Echo-server demo
-│   └── Program.cs
-└── test-client.html                   # Browser-based test client
-```
-
 ## Features
 
 - **Zero dependencies** — pure .NET, no third-party libraries
@@ -103,8 +78,6 @@ var server = new WebSocketServer(IPAddress.Loopback, 5000);
 cd src/LHZ.WebSocket.TestConsole
 dotnet run
 ```
-
-Then open `test-client.html` in a browser, click **Connect**, and start sending messages.
 
 ## API Reference
 
@@ -213,6 +186,31 @@ Internally, each `WebSocketClient` runs two background tasks:
 
 - **Receiver** — reads frames via `DataFrameReader`, reassembles fragmented messages, dispatches by opcode
 - **Sender** — dequeues frames from a bounded `Channel<DataFrame>`, writes header + payload to the network stream
+
+## Project Structure
+
+```
+LHZ.WebSocket.Server/
+├── LHZ.WebSocket.Server/              # Core library
+│   ├── WebSocketServer.cs             # TCP listener & client lifecycle
+│   ├── WebSocketClient.cs             # Per-connection send/receive
+│   ├── Core/
+│   │   ├── CloseMessage.cs            # Close frame payload
+│   │   ├── DataFrame.cs               # Frame builder / parser (RFC 6455 §5.2)
+│   │   └── DataFrameReader.cs         # Frame reader from Stream
+│   ├── Enums/
+│   │   ├── ClientStatus.cs            # Client lifecycle states
+│   │   ├── CloseCode.cs               # RFC 6455 close status codes
+│   │   ├── OpCode.cs                  # Frame opcodes
+│   │   └── ServerStatus.cs            # Server lifecycle states
+│   └── Http/
+│       ├── HttpContext.cs             # HTTP upgrade handshake
+│       ├── HttpHeaders.cs             # Internal header collection
+│       └── HttpRequest.cs             # HTTP request-line & header parser
+├── LHZ.WebSocket.TestConsole/         # Echo-server demo
+│   └── Program.cs
+└── test-client.html                   # Browser-based test client
+```
 
 ## Requirements
 
