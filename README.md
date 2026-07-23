@@ -1,42 +1,48 @@
 # LHZ.WebSocket.Server
 
-一个基于 .NET 的轻量级 WebSocket 服务端库，从底层实现 WebSocket 协议（RFC 6455），不依赖任何第三方 WebSocket 框架。
+[中文](README.zh-CN.md)
 
-## 项目结构
+A lightweight, zero-dependency WebSocket server library for .NET, implementing RFC 6455 from the ground up using raw `TcpListener` / `TcpClient`.
+
+## Project Structure
 
 ```
 LHZ.WebSocket.Server/
-├── LHZ.WebSocket.Server/          # 核心库
-│   ├── WebSocketServer.cs         # WebSocket 服务端主类
-│   ├── WebSocketClient.cs         # WebSocket 客户端连接封装
+├── LHZ.WebSocket.Server/              # Core library
+│   ├── WebSocketServer.cs             # TCP listener & client lifecycle
+│   ├── WebSocketClient.cs             # Per-connection send/receive
 │   ├── Core/
-│   │   ├── DataFrame.cs           # WebSocket 数据帧解析
-│   │   └── WebSocketStream.cs     # WebSocket 流读取封装
+│   │   ├── CloseMessage.cs            # Close frame payload
+│   │   ├── DataFrame.cs               # Frame builder / parser (RFC 6455 §5.2)
+│   │   └── DataFrameReader.cs         # Frame reader from Stream
 │   ├── Enums/
-│   │   └── Opcode.cs              # 操作码枚举
+│   │   ├── ClientStatus.cs            # Client lifecycle states
+│   │   ├── CloseCode.cs               # RFC 6455 close status codes
+│   │   ├── OpCode.cs                  # Frame opcodes
+│   │   └── ServerStatus.cs            # Server lifecycle states
 │   └── Http/
-│       ├── HttpContext.cs         # HTTP 升级请求上下文
-│       └── HttpRequest.cs         # HTTP 请求解析器
-└── LHZ.WebSocket.TestConsole/     # 测试控制台项目
-    └── Program.cs                 # 使用示例
+│       ├── HttpContext.cs             # HTTP upgrade handshake
+│       ├── HttpHeaders.cs             # Internal header collection
+│       └── HttpRequest.cs             # HTTP request-line & header parser
+├── LHZ.WebSocket.TestConsole/         # Echo-server demo
+│   └── Program.cs
+└── test-client.html                   # Browser-based test client
 ```
 
-## 功能特性
+## Features
 
-- ✅ **纯 .NET 实现**：基于 `TcpListener` / `TcpClient` 从零构建，无第三方依赖
-- ✅ **HTTP 升级握手**：自动处理 HTTP → WebSocket 协议升级
-- ✅ **数据帧解析**：支持 RFC 6455 标准的数据帧格式，包括 FIN、RSV、Opcode、Masked、Payload Length 等字段
-- ✅ **分片消息**：支持跨多个数据帧的连续消息（Continuation Frame）
-- ✅ **掩码处理**：支持客户端发送的掩码数据自动解码
-- ✅ **多种操作码**：支持 Text、Binary、Close、Ping、Pong
-- ✅ **事件驱动**：基于事件（Event）的异步回调模型
-- ✅ **.NET 10**：目标框架为 `net10.0`
+- **Zero dependencies** — pure .NET, no third-party libraries
+- **RFC 6455 compliant** — FIN, RSV1–3, all opcodes, masking, extended payload lengths
+- **Fragmented messages** — automatic reassembly of continuation frames (client → server)
+- **Streaming send** — split large payloads across multiple frames via `CreateDataFrame(Stream)`
+- **Bounded channel** — producer-consumer pattern for outgoing frames; no unbounded queues
+- **Event-driven** — `OnMessageReceived`, `OnBytesReceived`, `OnCloseRecived`, `OnClientClose`
+- **Ping/pong extensible** — virtual `PingProcessing` / `PongProcessing` for custom keep-alive
+- **.NET 10** — targets `net10.0` with nullable reference types enabled
 
-## 快速开始
+## Quick Start
 
-### 安装
-
-将 `LHZ.WebSocket.Server` 项目添加为你的项目引用：
+### 1. Add a project reference
 
 ```xml
 <ItemGroup>
@@ -44,83 +50,175 @@ LHZ.WebSocket.Server/
 </ItemGroup>
 ```
 
-### 基本用法
+### 2. Create and start a server
 
 ```csharp
 using LHZ.WebSocket.Server;
+using LHZ.WebSocket.Server.Core;
 using LHZ.WebSocket.Server.Http;
 
-// 创建 WebSocket 服务器，监听 5000 端口
-WebSocketServer server = new WebSocketServer(5000);
+// Listen on port 5000, all interfaces
+var server = new WebSocketServer(5000);
 
-// 处理升级请求（可用于鉴权、拒绝连接等）
 server.OnUpgradeRequest += (HttpContext context) =>
 {
-    Console.WriteLine($"收到升级请求: {context.Request.Url}");
-    return true; // 返回 true 允许升级，false 拒绝连接
-};
+    // Optional: inspect headers, add custom response headers, or deny the upgrade
+    // context.ResponseHeaders.Add("X-Custom", "value");
 
-// 处理客户端连接
-server.OnClientConnected += (WebSocketClient client) =>
-{
-    Console.WriteLine("客户端已连接");
+    var client = context.HttpUpgrade();    // completes the 101 handshake
 
-    // 处理消息接收
-    client.OnMessageReceived += (WebSocketClient sender, byte[] message) =>
+    client.OnMessageReceived += (WebSocketClient sender, string message) =>
     {
-        string text = System.Text.Encoding.UTF8.GetString(message);
-        Console.WriteLine($"收到消息: {text}");
+        Console.WriteLine($"Received: {message}");
+        sender.SendMessage($"Echo: {message}");
     };
 
-    // 启动接收循环
-    client.StartReceiving();
+    client.OnBytesReceived += (WebSocketClient sender, byte[] data) =>
+    {
+        Console.WriteLine($"Received {data.Length} bytes");
+    };
+
+    client.OnCloseRecived += (WebSocketClient sender, CloseMessage msg) =>
+    {
+        Console.WriteLine($"Client closed: {msg.CloseCode} — {msg.Message}");
+        sender.Close();
+    };
 };
 
-// 启动服务器
 server.Start();
+Console.WriteLine($"Server started, {server.ClientNums} clients connected");
+Console.ReadLine();
+server.Stop();
 ```
 
-### 指定 IP 地址
+### 3. Bind to a specific IP
 
 ```csharp
-// 绑定到特定 IP
-WebSocketServer server = new WebSocketServer(IPAddress.Parse("127.0.0.1"), 5000);
+var server = new WebSocketServer(IPAddress.Loopback, 5000);
 ```
 
-## API 参考
+### 4. Run the demo
 
-### WebSocketServer
+```bash
+cd src/LHZ.WebSocket.TestConsole
+dotnet run
+```
 
-| 成员 | 说明 |
-|------|------|
-| `WebSocketServer(int port)` | 创建服务器实例，监听所有网络接口 |
-| `WebSocketServer(IPAddress ip, int port)` | 创建服务器实例，绑定指定 IP |
-| `Start()` | 启动服务器，开始接受连接 |
-| `OnUpgradeRequest` | 事件：HTTP 升级请求到达时触发，返回 `true` 允许升级 |
-| `OnClientConnected` | 事件：客户端成功连接后触发 |
+Then open `test-client.html` in a browser, click **Connect**, and start sending messages.
 
-### WebSocketClient
+## API Reference
 
-| 成员 | 说明 |
-|------|------|
-| `StartReceiving()` | 开始接收消息（在 `OnClientConnected` 事件中调用） |
-| `OnMessageReceived` | 事件：收到完整消息时触发，回调参数为 `(WebSocketClient client, byte[] message)` |
+### `WebSocketServer`
 
-### Opcode 枚举
+| Member | Description |
+|--------|-------------|
+| `WebSocketServer(int port)` | Bind to all interfaces on the given port |
+| `WebSocketServer(IPAddress ip, int port)` | Bind to a specific IP and port |
+| `Start()` | Begin accepting connections |
+| `Stop()` | Disconnect all clients and stop listening |
+| `ClientNums` | Current number of connected clients |
+| `WebSocketClients` | Snapshot (array copy) of connected clients |
+| `OnUpgradeRequest` | Fired when an HTTP upgrade is received; call `HttpUpgrade()` to accept |
+| `OnClientConnected` | Fired after the WebSocket handshake completes |
 
-| 值 | 说明 |
-|----|------|
-| `Continuation = 0x0` | 连续帧 |
-| `Text = 0x1` | 文本消息 |
-| `Binary = 0x2` | 二进制消息 |
-| `Close = 0x8` | 关闭连接 |
-| `Ping = 0x9` | 心跳 Ping |
-| `Pong = 0xA` | 心跳 Pong |
+### `WebSocketClient`
 
-## 依赖
+| Member | Description |
+|--------|-------------|
+| `WebSocketClient(TcpClient tcp)` | Create with default outgoing queue capacity (1024) |
+| `WebSocketClient(TcpClient tcp, int capacity)` | Create with a custom queue capacity |
+| `Status` | Current `ClientStatus` (Connection / Opend / Close) |
+| `SendMessage(string)` | Send a UTF-8 text frame |
+| `SendByte(byte[])` | Send a binary frame |
+| `Open()` | Start the background send/receive loops |
+| `Close()` | Cancel tasks and dispose the TCP connection |
+| `OnMessageReceived` | `EventHandler<WebSocketClient, string>` — complete text message |
+| `OnBytesReceived` | `EventHandler<WebSocketClient, byte[]>` — complete binary message |
+| `OnCloseRecived` | `EventHandler<WebSocketClient, CloseMessage>` — close frame received |
+| `OnClientClose` | `Action<WebSocketClient>` — connection closed (local or remote) |
+| `PingProcessing(byte[])` | `virtual` — override for custom ping handling |
+| `PongProcessing(byte[])` | `virtual` — override for custom pong handling |
 
-- .NET 10 SDK
+### `HttpContext`
 
-## 许可
+| Member | Description |
+|--------|-------------|
+| `Request` | Parsed HTTP request (method, URL, headers) |
+| `ResponseHeaders` | Mutable headers sent in the 101 response |
+| `HttpUpgrade()` | Computes `Sec-WebSocket-Accept`, writes `101 Switching Protocols`, returns the `WebSocketClient` |
+| `WebSocketClient` | The upgraded client (populated after `HttpUpgrade()`) |
 
-本项目基于 [MIT License](LICENSE) 开源。
+### `HttpRequest`
+
+| Member | Description |
+|--------|-------------|
+| `Method` | HTTP method (e.g. `GET`) |
+| `Url` | Request path (e.g. `/chat`) |
+| `HttpVersion` | HTTP version string (e.g. `HTTP/1.1`) |
+| `Headers` | Parsed request headers (case-insensitive keys) |
+
+### `DataFrame`
+
+| Member | Description |
+|--------|-------------|
+| `CreateDataFrame(OpCode, bool FIN, byte[]? key, byte[] data)` | Build a single frame from a byte array |
+| `CreateDataFrame(OpCode, byte[]? key, Stream data, int maxLen)` | Split a stream into multiple frames |
+| `FIN` / `RSV1` / `RSV2` / `RSV3` | Frame control flags |
+| `Opcode` | `OpCode` enum value |
+| `Masked` | Whether the payload is XOR-masked |
+| `MaskingKey` | 4-byte masking key (null if unmasked) |
+| `DataFrameHeader` | Serialized frame header (2–14 bytes) |
+| `Data` | Payload as `ArraySegment<byte>` |
+
+### `CloseMessage`
+
+| Member | Description |
+|--------|-------------|
+| `CloseCode` | RFC 6455 status code (e.g. `Normal = 1000`) |
+| `Message` | Optional human-readable reason |
+
+### Enums
+
+**`OpCode`** — `Continuation (0x0)`, `Text (0x1)`, `Binary (0x2)`, `Close (0x8)`, `Ping (0x9)`, `Pong (0xA)`
+
+**`CloseCode`** — All RFC 6455 codes: `Normal (1000)`, `GoingAway (1001)`, `ProtocolError (1002)`, …, `TlsHandshake (1015)`
+
+**`ClientStatus`** — `Connection`, `Opend`, `Close`
+
+**`ServerStatus`** — `Ready`, `Start`, `Closing`, `Closed`
+
+## Architecture
+
+```mermaid
+sequenceDiagram
+    participant Browser
+    participant TcpListener
+    participant WebSocketServer
+    participant HttpContext
+    participant WebSocketClient
+
+    Browser->>TcpListener: TCP connect
+    TcpListener->>WebSocketServer: AcceptTcpClientAsync()
+    WebSocketServer->>HttpContext: Parse HTTP upgrade request
+    WebSocketServer->>+Browser: OnUpgradeRequest (user code calls HttpUpgrade())
+    HttpContext->>Browser: HTTP 101 + Sec-WebSocket-Accept
+    HttpContext->>WebSocketClient: new WebSocketClient(tcpClient)
+    WebSocketClient->>WebSocketClient: StartReceiver() + StartSender()
+    Browser->>WebSocketClient: Data frames
+    WebSocketClient->>Browser: OnMessageReceived / OnBytesReceived
+    WebSocketClient-->>Browser: SendMessage() / SendByte()
+```
+
+Internally, each `WebSocketClient` runs two background tasks:
+
+- **Receiver** — reads frames via `DataFrameReader`, reassembles fragmented messages, dispatches by opcode
+- **Sender** — dequeues frames from a bounded `Channel<DataFrame>`, writes header + payload to the network stream
+
+## Requirements
+
+- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
+
+## License
+
+[MIT](LICENSE)
+
