@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\LHZ.WebSocket.Server\LHZ.WebSocket.Server.csproj" />
+    <ProjectReference Include="..\LHZ.WebSocket\LHZ.WebSocket.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

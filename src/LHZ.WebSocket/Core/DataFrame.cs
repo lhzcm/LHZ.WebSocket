@@ -3,9 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using LHZ.WebSocket.Server.Enums;
+using LHZ.WebSocket.Enums;
 
-namespace LHZ.WebSocket.Server.Core
+namespace LHZ.WebSocket.Core
 {
     /// <summary>
     /// Represents a WebSocket data frame as defined in RFC 6455.

@@ -8,10 +8,10 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using LHZ.WebSocket.Server.Enums;
-using LHZ.WebSocket.Server.Http;
+using LHZ.WebSocket.Enums;
+using LHZ.WebSocket.Http;
 
-namespace LHZ.WebSocket.Server
+namespace LHZ.WebSocket
 {
     /// <summary>
     /// A lightweight WebSocket server that accepts TCP connections,

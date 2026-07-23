@@ -6,7 +6,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace LHZ.WebSocket.Server.Http
+namespace LHZ.WebSocket.Http
 {
     /// <summary>
     /// Wraps an incoming HTTP upgrade request and provides the WebSocket handshake logic.

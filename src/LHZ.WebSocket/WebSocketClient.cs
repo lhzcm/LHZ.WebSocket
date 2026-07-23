@@ -6,10 +6,10 @@ using System.Text;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
-using LHZ.WebSocket.Server.Core;
-using LHZ.WebSocket.Server.Enums;
+using LHZ.WebSocket.Core;
+using LHZ.WebSocket.Enums;
 
-namespace LHZ.WebSocket.Server
+namespace LHZ.WebSocket
 {
     /// <summary>
     /// Represents a single WebSocket client connection.

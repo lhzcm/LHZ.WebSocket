@@ -5,7 +5,7 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace LHZ.WebSocket.Server.Core
+namespace LHZ.WebSocket.Core
 {
     /// <summary>
     /// Reads and parses WebSocket data frames from a <see cref="Stream"/>.

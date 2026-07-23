@@ -1,4 +1,4 @@
-namespace LHZ.WebSocket.Server.Enums
+namespace LHZ.WebSocket.Enums
 {
     /// <summary>
     /// WebSocket frame opcodes as defined in RFC 6455 Section 5.2.

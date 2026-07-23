@@ -1,4 +1,4 @@
-namespace LHZ.WebSocket.Server.Http
+namespace LHZ.WebSocket.Http
 {
 
     /// <summary>

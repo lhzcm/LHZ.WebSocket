@@ -1,4 +1,4 @@
-namespace LHZ.WebSocket.Server.Enums
+namespace LHZ.WebSocket.Enums
 {
     public enum CloseCode
     {

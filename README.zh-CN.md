@@ -1,4 +1,4 @@
-# LHZ.WebSocket.Server
+# LHZ.WebSocket
 
 [English](README.md)
 
@@ -21,16 +21,16 @@
 
 ```xml
 <ItemGroup>
-    <ProjectReference Include="..\LHZ.WebSocket.Server\LHZ.WebSocket.Server.csproj" />
+    <ProjectReference Include="..\LHZ.WebSocket\LHZ.WebSocket.csproj" />
 </ItemGroup>
 ```
 
 ### 2. 创建并启动服务端
 
 ```csharp
-using LHZ.WebSocket.Server;
-using LHZ.WebSocket.Server.Core;
-using LHZ.WebSocket.Server.Http;
+using LHZ.WebSocket;
+using LHZ.WebSocket.Core;
+using LHZ.WebSocket.Http;
 
 // 监听 5000 端口，绑定所有网络接口
 var server = new WebSocketServer(5000);
@@ -183,8 +183,8 @@ sequenceDiagram
 ## 项目结构
 
 ```
-LHZ.WebSocket.Server/
-├── LHZ.WebSocket.Server/              # 核心库
+LHZ.WebSocket/
+├── LHZ.WebSocket/              # 核心库
 │   ├── WebSocketServer.cs             # TCP 监听器 & 客户端生命周期管理
 │   ├── WebSocketClient.cs             # 单连接收发管理
 │   ├── Core/

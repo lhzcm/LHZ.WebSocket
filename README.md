@@ -1,4 +1,4 @@
-# LHZ.WebSocket.Server
+# LHZ.WebSocket
 
 [中文](README.zh-CN.md)
 
@@ -21,16 +21,16 @@ A lightweight, zero-dependency WebSocket server library for .NET, implementing R
 
 ```xml
 <ItemGroup>
-    <ProjectReference Include="..\LHZ.WebSocket.Server\LHZ.WebSocket.Server.csproj" />
+    <ProjectReference Include="..\LHZ.WebSocket\LHZ.WebSocket.csproj" />
 </ItemGroup>
 ```
 
 ### 2. Create and start a server
 
 ```csharp
-using LHZ.WebSocket.Server;
-using LHZ.WebSocket.Server.Core;
-using LHZ.WebSocket.Server.Http;
+using LHZ.WebSocket;
+using LHZ.WebSocket.Core;
+using LHZ.WebSocket.Http;
 
 // Listen on port 5000, all interfaces
 var server = new WebSocketServer(5000);
@@ -190,8 +190,8 @@ Internally, each `WebSocketClient` runs two background tasks:
 ## Project Structure
 
 ```
-LHZ.WebSocket.Server/
-├── LHZ.WebSocket.Server/              # Core library
+LHZ.WebSocket/
+├── LHZ.WebSocket/              # Core library
 │   ├── WebSocketServer.cs             # TCP listener & client lifecycle
 │   ├── WebSocketClient.cs             # Per-connection send/receive
 │   ├── Core/

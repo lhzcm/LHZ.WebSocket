@@ -1,6 +1,6 @@
-﻿using LHZ.WebSocket.Server;
-using LHZ.WebSocket.Server.Core;
-using LHZ.WebSocket.Server.Http;
+﻿using LHZ.WebSocket;
+using LHZ.WebSocket.Core;
+using LHZ.WebSocket.Http;
 
 // Create a WebSocket server on port 5000
 WebSocketServer webSocketServer = new WebSocketServer(5000);

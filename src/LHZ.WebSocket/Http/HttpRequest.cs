@@ -4,7 +4,7 @@ using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Text;
 
-namespace LHZ.WebSocket.Server.Http
+namespace LHZ.WebSocket.Http
 {
     /// <summary>
     /// Reads and parses an HTTP request from a NetworkStream.

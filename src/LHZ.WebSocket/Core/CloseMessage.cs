@@ -1,6 +1,6 @@
-using LHZ.WebSocket.Server.Enums;
+using LHZ.WebSocket.Enums;
 
-namespace LHZ.WebSocket.Server.Core
+namespace LHZ.WebSocket.Core
 {
     /// <summary>
     /// Represents a WebSocket close frame payload: a status code and optional reason string.

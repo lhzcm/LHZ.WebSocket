@@ -1,4 +1,4 @@
 <Solution>
-  <Project Path="LHZ.WebSocket.Server/LHZ.WebSocket.Server.csproj" />
+  <Project Path="LHZ.WebSocket/LHZ.WebSocket.csproj" />
   <Project Path="LHZ.WebSocket.TestConsole/LHZ.WebSocket.TestConsole.csproj" />
 </Solution>

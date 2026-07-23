@@ -1,4 +1,4 @@
-namespace LHZ.WebSocket.Server.Enums
+namespace LHZ.WebSocket.Enums
 {
     /// <summary>
     /// Lifecycle states of the WebSocket server.
