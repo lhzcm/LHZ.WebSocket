@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using LHZ.WebSocket.Enums;
 using LHZ.WebSocket.Http;
+using LHZ.WebSocket.Interfaces;
 
 namespace LHZ.WebSocket
 {
@@ -27,9 +28,9 @@ namespace LHZ.WebSocket
         public event Action<HttpContext>? OnUpgradeRequest;
 
         /// <summary>Raised after a client completes the WebSocket handshake and is ready.</summary>
-        public event Action<WebSocketClient>? OnClientConnected;
+        public event Action<IWebSocketClient>? OnClientConnected;
 
-        private static readonly HashSet<WebSocketClient> _webSocketClients = new HashSet<WebSocketClient>();
+        private static readonly HashSet<IWebSocketClient> _webSocketClients = new HashSet<IWebSocketClient>();
         private CancellationTokenSource? _cancellationTokenSource;
         private Task? _task;
 
@@ -37,7 +38,7 @@ namespace LHZ.WebSocket
         public int ClientNums => _webSocketClients.Count;
 
         /// <summary>Snapshot of all currently connected clients.</summary>
-        public IEnumerable<WebSocketClient> WebSocketClients
+        public IEnumerable<IWebSocketClient> WebSocketClients
         {
             get
             {
@@ -94,15 +95,41 @@ namespace LHZ.WebSocket
 #endif
                     try
                     {
-                        using (var httpContext = HttpContext.GetHttpContext(this, tcpClient))
+                        using (var httpContext = HttpContext.GetHttpContext(tcpClient))
                         {
                             OnUpgradeRequest?.Invoke(httpContext);
+                            if (httpContext.WebSocketClient != null)
+                            {
+                                this.OnClientConnect(httpContext.WebSocketClient);
+                                httpContext.WebSocketClient.Open();
+                            }
                         }
                     }
                     catch (Exception ex)
                     {
+                        tcpClient?.Dispose();
                         Console.WriteLine(ex.Message + ex.StackTrace);
                     }
+                    // var task = Task.Run(() =>
+                    // {
+                    //     try
+                    //     {
+                    //         using (var httpContext = HttpContext.GetHttpContext(tcpClient))
+                    //         {
+                    //             OnUpgradeRequest?.Invoke(httpContext);
+                    //             if (httpContext.WebSocketClient != null)
+                    //             {
+                    //                 this.OnClientConnect(httpContext.WebSocketClient);
+                    //                 httpContext.WebSocketClient.Open();
+                    //             }
+                    //         }
+                    //     }
+                    //     catch (Exception ex)
+                    //     {
+                    //         tcpClient?.Dispose();
+                    //         Console.WriteLine(ex.Message + ex.StackTrace);
+                    //     }
+                    // });
                 }
             }
             catch (Exception ex)
@@ -133,7 +160,7 @@ namespace LHZ.WebSocket
         }
 
         /// <summary>Registers a newly upgraded client and subscribes to its close event.</summary>
-        internal void OnClientConnect(WebSocketClient client)
+        internal void OnClientConnect(IWebSocketClient client)
         {
             lock (this)
             {
@@ -143,7 +170,7 @@ namespace LHZ.WebSocket
         }
 
         /// <summary>Removes a disconnected client from the active set.</summary>
-        internal void OnClientClose(WebSocketClient client)
+        internal void OnClientClose(IWebSocketClient client)
         {
             lock (this)
             {

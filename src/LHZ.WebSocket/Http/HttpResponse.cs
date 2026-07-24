@@ -1,28 +1,17 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Net;
-using System.Net.Http;
-using System.Net.Http.Headers;
-using System.Net.Sockets;
 using System.Text;
 
 namespace LHZ.WebSocket.Http
 {
-    /// <summary>
-    /// Reads and parses an HTTP request from a NetworkStream.
-    /// Extracts the request line (method, URL, HTTP version) and all headers.
-    /// </summary>
-    public sealed class HttpRequest
+    public class HttpResponse
     {
         /// <summary>
-        /// HTTP method (e.g., GET, POST).
+        /// HttpStatusCode (e.g., 200).
         /// </summary>
-        public string Method { get; private set; } = string.Empty;
-
-        /// <summary>
-        /// Request URL/path (e.g., /chat).
-        /// </summary>
-        public string Url { get; private set; } = string.Empty;
+        public HttpStatusCode StatusCode { get; private set; }
 
         /// <summary>
         /// HTTP version string (e.g., HTTP/1.1).
@@ -33,38 +22,44 @@ namespace LHZ.WebSocket.Http
         /// Parsed request headers (case-insensitive keys).
         /// </summary>
         public System.Net.Http.Headers.HttpHeaders Headers { get; private set; }
-
-        private HttpRequest()
+        private HttpResponse()
         {
             Headers = new HttpHeaders();
         }
-        public HttpRequest(string url, string method, string httpVersion, System.Net.Http.Headers.HttpHeaders? headers = null)
+        public HttpResponse(HttpStatusCode statusCode, string httpVersion, System.Net.Http.Headers.HttpHeaders? headers = null)
         {
-            Url = url;
-            Method = method;
+            StatusCode = statusCode;
             HttpVersion = httpVersion;
             Headers = headers ?? new HttpHeaders();
         }
-        public static HttpRequest GetRequestFromStream(Stream stream)
+        public static HttpResponse GetRequestFromStream(Stream stream)
         {
-            var httpRequest = new HttpRequest();
-            httpRequest.Parse(stream);
-            return httpRequest;
+            var httpResponse = new HttpResponse();
+            httpResponse.Parse(stream);
+            return httpResponse;
         }
         public void WriteToStream(Stream stream)
         {
+            var statusCodeName = new StringBuilder(StatusCode.ToString());
+            for(int i = statusCodeName.Length - 1; i >= 0; i--)
+            {
+                if(statusCodeName[i] >= 'A' && statusCodeName[i] <= 'Z')
+                {
+                    statusCodeName.Insert(i, ' ');
+                }
+            }
             StringBuilder stringBuilder = new StringBuilder();
-            stringBuilder.Append(Method);
-            stringBuilder.Append(' ');
-            stringBuilder.Append(Url);
-            stringBuilder.Append(' ');
             stringBuilder.Append(HttpVersion);
+            stringBuilder.Append(' ');
+            stringBuilder.Append(((int)StatusCode).ToString());
+            stringBuilder.Append(' ');
+            stringBuilder.Append(statusCodeName);
             stringBuilder.Append('\n');
-            foreach(var item in Headers)
+            foreach (var item in Headers)
             {
                 stringBuilder.Append(item.Key);
                 stringBuilder.Append(": ");
-                foreach(var value in item.Value)
+                foreach (var value in item.Value)
                 {
                     stringBuilder.Append(value);
                     stringBuilder.Append(',');
@@ -88,9 +83,12 @@ namespace LHZ.WebSocket.Http
             if (parts.Length < 3)
                 throw new InvalidOperationException($"Invalid HTTP request line: {requestLine}");
 
-            Method = parts[0];
-            Url = parts[1];
-            HttpVersion = parts[2];
+            HttpVersion = parts[0];
+            if(!Enum.TryParse<HttpStatusCode>(parts[1], out HttpStatusCode httpStatusCode))
+            {
+                throw new InvalidOperationException($"Invalid HTTP Status Code: {parts[1]}");
+            }
+            StatusCode = httpStatusCode;
 
             // Read headers until empty line
             string line;

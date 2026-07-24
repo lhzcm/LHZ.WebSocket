@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
@@ -15,34 +16,34 @@ namespace LHZ.WebSocket.Http
     public sealed class HttpContext : IDisposable
     {
         private HttpRequest _request;
-        private HttpHeaders _responseHeaders;
-        private WebSocketServer _webSocketServer;
+        private HttpResponse? _response;
         private TcpClient _tcpClient;
         private WebSocketClient _webSocketClient = null!;
 
         /// <summary>The upgraded WebSocket client (null before <see cref="HttpUpgrade"/> is called).</summary>
         public WebSocketClient WebSocketClient => _webSocketClient;
+        public TcpClient TcpClient => _tcpClient;
 
-        private HttpContext(WebSocketServer webSocketServer, TcpClient tcpClient, HttpRequest request)
+        private HttpContext(TcpClient tcpClient, HttpRequest request, HttpResponse? response)
         {
-            _webSocketServer = webSocketServer;
             _tcpClient = tcpClient;
             _request = request;
-            _responseHeaders = new HttpHeaders();
+            _response = response;
         }
 
         /// <summary>Parses the HTTP request from the TCP stream and returns a new context.</summary>
-        internal static HttpContext GetHttpContext(WebSocketServer webSocketServer, TcpClient tcpClient)
+        internal static HttpContext GetHttpContext(TcpClient tcpClient, HttpRequest request)
         {
-            var httpRequest = new HttpRequest(tcpClient.GetStream());
-            return new HttpContext(webSocketServer, tcpClient, httpRequest);
+            return new HttpContext(tcpClient, request, null);
+        }
+        internal static HttpContext GetHttpContext(TcpClient tcpClient)
+        {
+            var request = HttpRequest.GetRequestFromStream(tcpClient.GetStream());
+            return new HttpContext(tcpClient, request, new HttpResponse(HttpStatusCode.SwitchingProtocols, "HTTP/1.1"));
         }
         /// <summary>The parsed HTTP upgrade request.</summary>
         public HttpRequest Request => _request;
-
-        /// <summary>Response headers to send back (e.g., Upgrade, Sec-WebSocket-Accept).</summary>
-        public System.Net.Http.Headers.HttpHeaders ResponseHeaders => _responseHeaders;
-
+        public HttpResponse? Response => _response;
         /// <summary>
         /// Completes the WebSocket handshake: computes the accept key,
         /// sends HTTP 101 Switching Protocols, and creates a <see cref="WebSocketClient"/>.
@@ -51,40 +52,46 @@ namespace LHZ.WebSocket.Http
         {
             if (_webSocketClient != null)
                 return _webSocketClient;
-
-            this.ResponseHeaders.Add("Upgrade", "websocket");
-            this.ResponseHeaders.Add("Connection", "Upgrade");
-
-            // Compute Sec-WebSocket-Accept per RFC 6455 Section 4.2.2
-            string secWebSocketKey = Request.Headers.GetValues("Sec-WebSocket-Key").First()
-                ?? throw new InvalidOperationException("Missing Sec-WebSocket-Key header.");
-
-            var sha1 = Convert.ToBase64String(
-                SHA1.HashData(
-                    System.Text.Encoding.UTF8.GetBytes(
-                        secWebSocketKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
-
-            this.ResponseHeaders.Add("Sec-WebSocket-Accept", sha1);
-
-            // Write HTTP 101 response
-            var networkStream = _tcpClient.GetStream();
-            networkStream.Write(System.Text.Encoding.UTF8.GetBytes("HTTP/1.1 101 Switching Protocols\n"));
-            var headersStrBuild = new StringBuilder();
-            foreach (var item in this.ResponseHeaders)
+            if(_response != null)
             {
-                headersStrBuild.Append(item.Key);
-                headersStrBuild.Append(":");
-                headersStrBuild.Append(String.Join(',', item.Value));
-                headersStrBuild.Append("\n");
+                _response.Headers.Add("Upgrade", "websocket");
+                _response.Headers.Add("Connection", "Upgrade");
+                // Compute Sec-WebSocket-Accept per RFC 6455 Section 4.2.2
+                string secWebSocketKey = Request.Headers.GetValues("Sec-WebSocket-Key").First();
+                var sha1 = Convert.ToBase64String(
+                    SHA1.HashData(
+                        System.Text.Encoding.UTF8.GetBytes(
+                            secWebSocketKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
+                _response.Headers.Add("Sec-WebSocket-Accept", sha1);
+                _response.WriteToStream(_tcpClient.GetStream());
+                _webSocketClient = new WebSocketClient(this);
+                return _webSocketClient;
             }
-            headersStrBuild.Append("\n");
-            networkStream.Write(System.Text.Encoding.UTF8.GetBytes(headersStrBuild.ToString()));
-            networkStream.Flush();
+            else
+            {
+                _request.Headers.Add("Connection", "Upgrade");
+                _request.Headers.Add("Upgrade", "websocket");
+                _request.Headers.Add("Sec-WebSocket-Version", "13");
+                _request.Headers.Add("Sec-WebSocket-Key", Convert.ToBase64String(Guid.NewGuid().ToByteArray()));
 
-            _webSocketClient = new WebSocketClient(_tcpClient);
-            _webSocketServer.OnClientConnect(_webSocketClient);
-            _webSocketClient.Open();
-            return _webSocketClient;
+                _request.WriteToStream(_tcpClient.GetStream());
+                _response = HttpResponse.GetRequestFromStream(_tcpClient.GetStream());
+                if(_response.StatusCode != HttpStatusCode.SwitchingProtocols)
+                {
+                    throw new Exception($"HttpStatusCode Not Supported : {_response.StatusCode}");
+                }
+                if(!_response.Headers.GetValues("Upgrade").Contains("websocket"))
+                {
+                    throw new Exception($"Upgrade Not Supported : {String.Join(',', _response.Headers.GetValues("Upgrade"))}");
+                }
+                var secWebSocketAccept = _response.Headers.GetValues("Sec-WebSocket-Accept").First();
+                if(secWebSocketAccept != Convert.ToBase64String(SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(_request.Headers.GetValues("Sec-WebSocket-Key").First() + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))))
+                {
+                    throw new Exception("The Sec-WebSocket-Accept has Error!");
+                }
+                _webSocketClient = new WebSocketClient(this);
+                return _webSocketClient;
+            }
         }
 
         /// <summary>

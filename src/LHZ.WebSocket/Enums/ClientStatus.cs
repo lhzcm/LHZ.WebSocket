@@ -6,12 +6,12 @@ namespace LHZ.WebSocket.Enums
     public enum ClientStatus : byte
     {
         /// <summary>TCP connected but WebSocket handshake not yet completed.</summary>
-        Connection = 0,
+        Connection = 1,
 
         /// <summary>Handshake complete, ready to send and receive frames.</summary>
-        Opend = 1,
+        Opend = 2,
 
         /// <summary>Connection closed (locally or by peer).</summary>
-        Close = 2
+        Close = 3
     }
 }

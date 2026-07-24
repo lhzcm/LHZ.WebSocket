@@ -2,6 +2,30 @@
   <PropertyGroup>
     <TargetFrameworks>NET5;NET6;NET8;NET9;NET10.0</TargetFrameworks>
     <Nullable>enable</Nullable>
+    <Version>1.0.0</Version>
+    <Authors>LHZ</Authors>
+    <Description>A lightweight, zero-dependency WebSocket library for .NET, implementing RFC 6455 from the ground up using raw TcpListener/TcpClient. Supports both server-side and client-side WebSocket connections.</Description>
+    <PackageIcon>logo.png</PackageIcon>
+    <RepositoryType>Git</RepositoryType>
+    <RepositoryUrl>https://github.com/lhzcm/LHZ.WebSocket</RepositoryUrl>
+    <PackageReleaseNotes>1.9.0：新增功能与性能优化。</PackageReleaseNotes>
+    <GenerateDocumentationFile>True</GenerateDocumentationFile>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/lhzcm/LHZ.WebSocket</PackageProjectUrl>
+    <PackageTags>websocket</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
   </PropertyGroup>
+  <ItemGroup>
+    <None Include="..\..\README.md">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+    <None Include="logo.png">
+      <Pack>True</Pack>
+      <PackagePath></PackagePath>
+    </None>
+  </ItemGroup>
 </Project>
 <!--NET40;NET45;NET46;NETSTANDARD2.0;NET5;NET6-->

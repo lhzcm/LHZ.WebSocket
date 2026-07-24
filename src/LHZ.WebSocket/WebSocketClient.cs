@@ -1,62 +1,79 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using LHZ.WebSocket.Core;
+using LHZ.WebSocket.Delegates;
 using LHZ.WebSocket.Enums;
+using LHZ.WebSocket.Http;
+using LHZ.WebSocket.Interfaces;
 
 namespace LHZ.WebSocket
 {
-    /// <summary>
-    /// Represents a single WebSocket client connection.
-    /// Manages frame-level send/receive with separate reader and writer background tasks.
-    /// </summary>
-    public class WebSocketClient : IDisposable
+    public class WebSocketClient : IWebSocketClient
     {
-        public delegate void EventHandler<TSender, TEventArgs>(in TSender sender,  TEventArgs e);
-        private readonly TcpClient _tcpClient;
-        private readonly NetworkStream _networkStream;
-
+        protected readonly NetworkStream _networkStream;
         /// <summary>Bounded channel for outgoing data frames (producer-consumer).</summary>
-        private readonly Channel<DataFrame> _channel;
-
-        private readonly CancellationTokenSource _cts = new CancellationTokenSource();
-
+        protected readonly Channel<DataFrame> _channel;
+        protected readonly HttpContext _httpContext;
+        protected readonly CancellationTokenSource _cts = new CancellationTokenSource();
+        public HttpContext HttpContext => _httpContext;
         /// <summary>Raised when a complete text message is received.</summary>
-        public event EventHandler<WebSocketClient, string>? OnMessageReceived;
+        public event Delegates.EventHandler<IWebSocketClient, string>? OnMessageReceived;
 
         /// <summary>Raised when a complete binary message is received.</summary>
-        public event EventHandler<WebSocketClient, byte[]>? OnBytesReceived;
+        public event Delegates.EventHandler<IWebSocketClient, byte[]>? OnBytesReceived;
 
         /// <summary>Raised when a close frame is received from the peer.</summary>
-        public event EventHandler<WebSocketClient, CloseMessage>? OnCloseRecived;
+        public event Delegates.EventHandler<IWebSocketClient, CloseMessage>? OnCloseRecived;
 
         /// <summary>Raised when this client disconnects (local or remote).</summary>
-        public event Action<WebSocketClient>? OnClientClose;
-
-        public ClientStatus _clientStatus = ClientStatus.Connection;
+        public event Action<IWebSocketClient>? OnClientClose;
+        public event Delegates.EventHandler<IWebSocketClient, byte[]>? OnPingRecived;
+        public event Delegates.EventHandler<IWebSocketClient, byte[]>? OnPongRecived;
+        protected ClientStatus _clientStatus;
 
         /// <summary>Current connection status.</summary>
         public ClientStatus Status => _clientStatus;
 
-        public WebSocketClient(TcpClient tcpClient, int capacity)
+        internal WebSocketClient(HttpContext httpContext, int capacity)
         {
-            _tcpClient = tcpClient;
-            _networkStream = tcpClient.GetStream();
+            _clientStatus = ClientStatus.Connection;
+            _httpContext = httpContext;
+            _networkStream = httpContext.TcpClient.GetStream();
             _channel = Channel.CreateBounded<DataFrame>(capacity);
         }
-
-        public WebSocketClient(TcpClient tcpClient)
+        internal WebSocketClient(HttpContext httpContext)
         {
-            _tcpClient = tcpClient;
-            _networkStream = tcpClient.GetStream();
+            _clientStatus = ClientStatus.Connection;
+            _httpContext = httpContext;
+            _networkStream = httpContext.TcpClient.GetStream();
             _channel = Channel.CreateBounded<DataFrame>(1024);
         }
-
+        public static WebSocketClient CreateWebSocketClient(string url, System.Net.Http.Headers.HttpHeaders? headers = null)
+        {
+            if(!Uri.TryCreate(url, UriKind.Absolute, out Uri? result) || result == null)
+            {
+                throw new Exception("There’s a problem with the URL link");
+            }
+            var tcpClient = new TcpClient(result.Host, result.Port);
+            if(headers == null)
+            {
+                headers = new HttpHeaders();
+            }
+            headers.Add("Host", result.Host);
+            using(var httpContext = Http.HttpContext.GetHttpContext(tcpClient, new HttpRequest(result.PathAndQuery, "GET", "HTTP/1.1", headers)))
+            {
+                return httpContext.HttpUpgrade();
+            }
+        }
         /// <summary>Sends a UTF-8 text message to the peer.</summary>
         public void SendMessage(string message)
         {
@@ -70,7 +87,7 @@ namespace LHZ.WebSocket
         }
 
         /// <summary>Enqueues a data frame onto the outgoing channel.</summary>
-        private void Send(OpCode opCode, byte[] bytes)
+        protected void Send(OpCode opCode, byte[] bytes)
         {
             var dataFrame = DataFrame.CreateDataFrame(opCode, true, null, bytes);
             _channel.Writer.WriteAsync(dataFrame).GetAwaiter().GetResult();
@@ -95,7 +112,7 @@ namespace LHZ.WebSocket
                 return;
             }
             _cts.Cancel();
-            _tcpClient.Dispose();
+            _httpContext.TcpClient.Dispose();
             _clientStatus = ClientStatus.Close;
             OnClientClose?.Invoke(this);
         }
@@ -179,29 +196,17 @@ namespace LHZ.WebSocket
                     }
                 case OpCode.Ping:
                     {
-                        PingProcessing(data);
+                        OnPingRecived?.Invoke(this, data);
                         break;
                     }
                 case OpCode.Pong:
                     {
-                        PongProcessing(data);
+                        OnPongRecived?.Invoke(this, data);
                         break;
                     }
                 default: throw new Exception("OpCode not Support");
             }
         }
-
-        /// <summary>Called when a ping frame is received. Override to add custom behavior.</summary>
-        protected virtual void PingProcessing(byte[] data)
-        {
-        }
-
-        /// <summary>Called when a pong frame is received. Default sends an empty pong back.</summary>
-        protected virtual void PongProcessing(byte[] data)
-        {
-            Send(OpCode.Pong, Array.Empty<byte>());
-        }
-
         /// <summary>
         /// Background task that dequeues outgoing data frames from the channel
         /// and writes them to the network stream.
@@ -227,7 +232,14 @@ namespace LHZ.WebSocket
                 }
             });
         }
-
+        public void Ping(byte[] bytes)
+        {
+            Send(OpCode.Ping, bytes);
+        }
+        public void Pong(byte[] bytes)
+        {
+            Send(OpCode.Pong, bytes);
+        }
         public void Dispose()
         {
             Close();
