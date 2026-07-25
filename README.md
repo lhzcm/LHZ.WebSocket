@@ -17,12 +17,24 @@ A lightweight, zero-dependency WebSocket library for .NET, implementing RFC 6455
 
 ## Quick Start
 
-### 1. Add a project reference
+### 1. Add `LHZ.WebSocket` Package
 
-```xml
-<ItemGroup>
-    <ProjectReference Include="..\LHZ.WebSocket\LHZ.WebSocket.csproj" />
-</ItemGroup>
+#### Package Manager
+
+``` bash
+Install-Package LHZ.WebSocket -Version 1.0.1
+```
+
+#### .NET CLI
+
+``` bash
+dotnet add package LHZ.WebSocket --Version 1.0.1
+```
+
+#### Package Reference
+
+``` xml
+<PackageReference Include="LHZ.WebSocket" Version="1.0.1" />
 ```
 
 ### 2. Create and start a server

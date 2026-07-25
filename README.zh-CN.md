@@ -17,12 +17,24 @@
 
 ## 快速开始
 
-### 1. 添加项目引用
+### 1. 添加LHZ.WebSocket包
 
-```xml
-<ItemGroup>
-    <ProjectReference Include="..\LHZ.WebSocket\LHZ.WebSocket.csproj" />
-</ItemGroup>
+#### Package Manager
+
+``` bash
+Install-Package LHZ.WebSocket -Version 1.0.1
+```
+
+#### .NET CLI
+
+``` bash
+dotnet add package LHZ.WebSocket --Version 1.0.1
+```
+
+#### Package Reference
+
+``` xml
+<PackageReference Include="LHZ.WebSocket" Version="1.0.1" />
 ```
 
 ### 2. 创建并启动服务端
