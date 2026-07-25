@@ -54,7 +54,7 @@ namespace LHZ.WebSocket.Http
             stringBuilder.Append(((int)StatusCode).ToString());
             stringBuilder.Append(' ');
             stringBuilder.Append(statusCodeName);
-            stringBuilder.Append('\n');
+            stringBuilder.Append("\r\n");
             foreach (var item in Headers)
             {
                 stringBuilder.Append(item.Key);

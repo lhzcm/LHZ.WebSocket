@@ -1,0 +1,11 @@
+global using Xunit;
+global using System;
+global using System.Collections.Generic;
+global using System.Linq;
+global using System.Threading;
+global using System.Threading.Tasks;
+global using System.IO;
+global using LHZ.WebSocket;
+global using LHZ.WebSocket.Core;
+global using LHZ.WebSocket.Enums;
+global using LHZ.WebSocket.Interfaces;

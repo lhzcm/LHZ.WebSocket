@@ -59,7 +59,7 @@ namespace LHZ.WebSocket.Http
             stringBuilder.Append(Url);
             stringBuilder.Append(' ');
             stringBuilder.Append(HttpVersion);
-            stringBuilder.Append('\n');
+            stringBuilder.Append("\r\n");
             foreach(var item in Headers)
             {
                 stringBuilder.Append(item.Key);
