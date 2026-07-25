@@ -43,18 +43,18 @@ server.OnUpgradeRequest += (HttpContext context) =>
 
     var client = context.HttpUpgrade();    // 完成 101 握手
 
-    client.OnMessageReceived += (in IWebSocketClient sender, string message) =>
+    client.OnMessageReceived += (IWebSocketClient sender, string message) =>
     {
         Console.WriteLine($"收到消息: {message}");
         sender.SendMessage($"Echo: {message}");
     };
 
-    client.OnBytesReceived += (in IWebSocketClient sender, byte[] data) =>
+    client.OnBytesReceived += (IWebSocketClient sender, byte[] data) =>
     {
         Console.WriteLine($"收到 {data.Length} 字节");
     };
 
-    client.OnCloseRecived += (in IWebSocketClient sender, CloseMessage msg) =>
+    client.OnCloseRecived += (IWebSocketClient sender, CloseMessage msg) =>
     {
         Console.WriteLine($"客户端关闭: {msg.CloseCode} — {msg.Message}");
         sender.Close();
@@ -77,12 +77,12 @@ using LHZ.WebSocket.Interfaces;
 // 连接到 WebSocket 服务端
 var client = WebSocketClient.CreateWebSocketClient("ws://localhost:5000/");
 
-client.OnMessageReceived += (in IWebSocketClient sender, string message) =>
+client.OnMessageReceived += (IWebSocketClient sender, string message) =>
 {
     Console.WriteLine($"收到消息: {message}");
 };
 
-client.OnCloseRecived += (in IWebSocketClient sender, CloseMessage message) =>
+client.OnCloseRecived += (IWebSocketClient sender, CloseMessage message) =>
 {
     Console.WriteLine($"连接关闭: {message.CloseCode}");
     sender.Close();

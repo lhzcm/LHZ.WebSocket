@@ -43,18 +43,18 @@ server.OnUpgradeRequest += (HttpContext context) =>
 
     var client = context.HttpUpgrade();    // completes the 101 handshake
 
-    client.OnMessageReceived += (in IWebSocketClient sender, string message) =>
+    client.OnMessageReceived += (IWebSocketClient sender, string message) =>
     {
         Console.WriteLine($"Received: {message}");
         sender.SendMessage($"Echo: {message}");
     };
 
-    client.OnBytesReceived += (in IWebSocketClient sender, byte[] data) =>
+    client.OnBytesReceived += (IWebSocketClient sender, byte[] data) =>
     {
         Console.WriteLine($"Received {data.Length} bytes");
     };
 
-    client.OnCloseRecived += (in IWebSocketClient sender, CloseMessage msg) =>
+    client.OnCloseRecived += (IWebSocketClient sender, CloseMessage msg) =>
     {
         Console.WriteLine($"Client closed: {msg.CloseCode} — {msg.Message}");
         sender.Close();
@@ -77,12 +77,12 @@ using LHZ.WebSocket.Interfaces;
 // Connect to a WebSocket server
 var client = WebSocketClient.CreateWebSocketClient("ws://localhost:5000/");
 
-client.OnMessageReceived += (in IWebSocketClient sender, string message) =>
+client.OnMessageReceived += (IWebSocketClient sender, string message) =>
 {
     Console.WriteLine($"Received: {message}");
 };
 
-client.OnCloseRecived += (in IWebSocketClient sender, CloseMessage message) =>
+client.OnCloseRecived += (IWebSocketClient sender, CloseMessage message) =>
 {
     Console.WriteLine($"Connection closed: {message.CloseCode}");
     sender.Close();
