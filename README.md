@@ -138,8 +138,6 @@ dotnet run
 | `OnPongRecived` | `EventHandler<IWebSocketClient, byte[]>` — Pong frame received |
 | `OnClientClose` | `Action<IWebSocketClient>` — connection closed (local or remote) |
 
-> **Note:** Event handlers use `in` parameter for the sender (`in IWebSocketClient sender`), allowing both the `IWebSocketClient` interface and the concrete `WebSocketClient` class.
-
 ### `WebSocketClient`
 
 | Member | Description |

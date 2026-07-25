@@ -138,8 +138,6 @@ dotnet run
 | `OnPongRecived` | `EventHandler<IWebSocketClient, byte[]>` — 收到 Pong 帧 |
 | `OnClientClose` | `Action<IWebSocketClient>` — 连接关闭（本地或远端） |
 
-> **注意：** 事件处理器使用 `in` 参数修饰 sender（`in IWebSocketClient sender`），可接收 `IWebSocketClient` 接口或具体的 `WebSocketClient` 类。
-
 ### `WebSocketClient`
 
 | 成员 | 说明 |

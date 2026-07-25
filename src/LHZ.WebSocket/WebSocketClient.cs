@@ -119,7 +119,7 @@ namespace LHZ.WebSocket
 
         /// <summary>
         /// Background task that continuously reads WebSocket frames from the network stream,
-        /// reassembles fragmented messages, and dispatches them via <see cref=\"ReceiveProcessing\"/>.
+        /// reassembles fragmented messages, and dispatches them via <see cref="ReceiveProcessing"/>.
         /// </summary>
         private void StartReceiver()
         {

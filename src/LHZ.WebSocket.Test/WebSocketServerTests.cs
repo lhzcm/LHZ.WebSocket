@@ -302,7 +302,7 @@ public class WebSocketServerTests : IDisposable
         server.OnUpgradeRequest += (ctx) =>
         {
             var client = ctx.HttpUpgrade();
-            client.OnMessageReceived += (in IWebSocketClient sender, string msg) =>
+            client.OnMessageReceived += (IWebSocketClient sender, string msg) =>
             {
                 receivedMessage = msg;
                 messageReceived.Set();
@@ -345,7 +345,7 @@ public class WebSocketServerTests : IDisposable
         server.OnUpgradeRequest += (ctx) =>
         {
             var client = ctx.HttpUpgrade();
-            client.OnBytesReceived += (in IWebSocketClient sender, byte[] data) =>
+            client.OnBytesReceived += (IWebSocketClient sender, byte[] data) =>
             {
                 receivedData = data;
                 dataReceived.Set();
@@ -398,7 +398,7 @@ public class WebSocketServerTests : IDisposable
         server.OnUpgradeRequest += (ctx) =>
         {
             var client = ctx.HttpUpgrade();
-            client.OnMessageReceived += (in IWebSocketClient sender, string msg) =>
+            client.OnMessageReceived += (IWebSocketClient sender, string msg) =>
             {
                 sender.SendMessage($"ECHO: {msg}");
                 sentMessage = $"ECHO: {msg}";
