@@ -5,9 +5,9 @@ namespace LHZ.WebSocket.Http
     /// Internal concrete implementation of <see cref="System.Net.Http.Headers.HttpHeaders"/>
     /// used for HTTP request/response headers.
     /// </summary>
-    internal class HttpHeaders : System.Net.Http.Headers.HttpHeaders
+    public class HttpHeaders : System.Net.Http.Headers.HttpHeaders
     {
-        internal HttpHeaders()
+        public HttpHeaders()
         {
         }
     }

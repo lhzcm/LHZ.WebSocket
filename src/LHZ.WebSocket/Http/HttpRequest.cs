@@ -101,7 +101,14 @@ namespace LHZ.WebSocket.Http
                 {
                     string key = line.Substring(0, colonIndex).Trim();
                     string value = line.Substring(colonIndex + 1).Trim();
-                    Headers.Add(key, value);
+                    try
+                    {
+                        Headers.Add(key, value);
+                    }
+                    catch(Exception)
+                    {
+                        Headers.TryAddWithoutValidation(key, value);
+                    }
                 }
             }
         }

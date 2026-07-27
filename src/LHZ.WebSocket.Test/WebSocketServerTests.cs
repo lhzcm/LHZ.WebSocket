@@ -8,11 +8,9 @@ namespace LHZ.WebSocket.Test;
 /// <summary>
 /// WebSocketServer 集成测试：生命周期、客户端连接、消息通信。
 /// 使用本地回环地址和随机端口。
-/// 注意：由于 HttpResponse.WriteToStream 使用 \n 而非 \r\n，
 /// CreateWebSocketClient 的 HTTP 解析存在已知问题，
 /// 故使用原始 TCP 进行手动的 WebSocket 握手来测试通信。
 /// </summary>
-[Collection("SequentialTests")]
 public class WebSocketServerTests : IDisposable
 {
     private HashSet<int> _usedPorts = new HashSet<int>();

@@ -7,10 +7,8 @@ namespace LHZ.WebSocket.Test;
 
 /// <summary>
 /// WebSocketClient 基础功能测试。
-/// 由于 CreateWebSocketClient 依赖的服务器 HTTP 响应解析存在已知 \n 行尾问题，
 /// 本测试类通过服务器端 OnUpgradeRequest 获取 IWebSocketClient 进行测试。
 /// </summary>
-[Collection("SequentialTests")]
 public class WebSocketClientTests : IDisposable
 {
     // private WebSocketServer? server;
