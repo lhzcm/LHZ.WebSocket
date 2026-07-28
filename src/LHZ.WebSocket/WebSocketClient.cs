@@ -57,7 +57,7 @@ namespace LHZ.WebSocket
             _networkStream = httpContext.TcpClient.GetStream();
             _channel = Channel.CreateBounded<DataFrame>(1024);
         }
-        public static WebSocketClient CreateWebSocketClient(string url, System.Net.Http.Headers.HttpHeaders? headers = null)
+        public static WebSocketClient CreateWebSocketClient(string url, System.Net.Http.Headers.HttpHeaders? headers = null, int timeOUt = 0)
         {
             if(!Uri.TryCreate(url, UriKind.Absolute, out Uri? result) || result == null)
             {
@@ -69,7 +69,7 @@ namespace LHZ.WebSocket
                 headers = new HttpHeaders();
             }
             headers.Add("Host", result.Host);
-            using(var httpContext = Http.HttpContext.GetHttpContext(tcpClient, new HttpRequest(result.PathAndQuery, "GET", "HTTP/1.1", headers)))
+            using(var httpContext = Http.HttpContext.GetHttpContext(tcpClient, new HttpRequest(result.PathAndQuery, "GET", "HTTP/1.1", headers), timeOUt))
             {
                 return httpContext.HttpUpgrade();
             }

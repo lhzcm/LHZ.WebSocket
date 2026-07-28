@@ -33,7 +33,6 @@ namespace LHZ.WebSocket.Http
         /// Parsed request headers (case-insensitive keys).
         /// </summary>
         public System.Net.Http.Headers.HttpHeaders Headers { get; private set; }
-
         private HttpRequest()
         {
             Headers = new HttpHeaders();
@@ -45,6 +44,11 @@ namespace LHZ.WebSocket.Http
             HttpVersion = httpVersion;
             Headers = headers ?? new HttpHeaders();
         }
+        /// <summary>
+        /// Get Request Info From NetStream
+        /// </summary>
+        /// <param name="stream"></param>
+        /// <returns></returns>
         public static HttpRequest GetRequestFromStream(Stream stream)
         {
             var httpRequest = new HttpRequest();

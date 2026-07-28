@@ -1,11 +1,13 @@
 
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace LHZ.WebSocket.Http
 {
@@ -18,11 +20,32 @@ namespace LHZ.WebSocket.Http
         private HttpRequest _request;
         private HttpResponse? _response;
         private TcpClient _tcpClient;
+        private int _status = 0;
         private WebSocketClient _webSocketClient = null!;
-
+        private Task? _timeOutExecuter = null;
         /// <summary>The upgraded WebSocket client (null before <see cref="HttpUpgrade"/> is called).</summary>
         public WebSocketClient WebSocketClient => _webSocketClient;
         public TcpClient TcpClient => _tcpClient;
+        private void Init(int timeOut)
+        {
+            _status = 1;
+            if (timeOut > 0)
+            {
+                _timeOutExecuter = Task.Run(async () =>
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(timeOut));
+                    if(_status == 1)
+                    {
+                        _status = -2;
+                        _tcpClient.Dispose();
+                    }
+                });
+            }
+            if (_request == null)
+            {
+                _request = HttpRequest.GetRequestFromStream(_tcpClient.GetStream());
+            }
+        }
 
         private HttpContext(TcpClient tcpClient, HttpRequest request, HttpResponse? response)
         {
@@ -32,17 +55,23 @@ namespace LHZ.WebSocket.Http
         }
 
         /// <summary>Parses the HTTP request from the TCP stream and returns a new context.</summary>
-        internal static HttpContext GetHttpContext(TcpClient tcpClient, HttpRequest request)
+        internal static HttpContext GetHttpContext(TcpClient tcpClient, HttpRequest request, int timeOut)
         {
-            return new HttpContext(tcpClient, request, null);
+            var context = new HttpContext(tcpClient, request, null);
+            context.Init(timeOut);
+            return context;
         }
-        internal static HttpContext GetHttpContext(TcpClient tcpClient)
+        internal static HttpContext GetHttpContext(TcpClient tcpClient, int timeOut)
         {
-            var request = HttpRequest.GetRequestFromStream(tcpClient.GetStream());
-            return new HttpContext(tcpClient, request, new HttpResponse(HttpStatusCode.SwitchingProtocols, "HTTP/1.1"));
+            var context = new HttpContext(tcpClient, null, new HttpResponse(HttpStatusCode.SwitchingProtocols, "HTTP/1.1"));
+            context.Init(timeOut);
+            return context;
         }
         /// <summary>The parsed HTTP upgrade request.</summary>
         public HttpRequest Request => _request;
+        /// <summary>
+        /// Http Response Info
+        /// </summary>
         public HttpResponse? Response => _response;
         /// <summary>
         /// Completes the WebSocket handshake: computes the accept key,
@@ -52,6 +81,14 @@ namespace LHZ.WebSocket.Http
         {
             if (_webSocketClient != null)
                 return _webSocketClient;
+            if(_status == -2)
+            {
+                throw new TimeoutException($"HttpContext Connect Time Out!");
+            }
+            else if(_status != 1)
+            {
+                throw new InvalidOperationException($"Current Status is not allow Upgrade Operation");
+            }
             if(_response != null)
             {
                 _response.Headers.Add("Upgrade", "websocket");
@@ -64,6 +101,7 @@ namespace LHZ.WebSocket.Http
                             secWebSocketKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
                 _response.Headers.Add("Sec-WebSocket-Accept", sha1);
                 _response.WriteToStream(_tcpClient.GetStream());
+                _status = 2;
                 _webSocketClient = new WebSocketClient(this);
                 return _webSocketClient;
             }
@@ -89,6 +127,7 @@ namespace LHZ.WebSocket.Http
                 {
                     throw new Exception("The Sec-WebSocket-Accept has Error!");
                 }
+                _status = 2;
                 _webSocketClient = new WebSocketClient(this);
                 return _webSocketClient;
             }
@@ -99,8 +138,9 @@ namespace LHZ.WebSocket.Http
         /// </summary>
         public void Dispose()
         {
-            if (_webSocketClient == null)
+            if (_status == 1)
             {
+                _status = -1;
                 _tcpClient.Dispose();
             }
         }

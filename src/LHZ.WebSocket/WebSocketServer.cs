@@ -33,6 +33,7 @@ namespace LHZ.WebSocket
         private static readonly HashSet<IWebSocketClient> _webSocketClients = new HashSet<IWebSocketClient>();
         private CancellationTokenSource? _cancellationTokenSource;
         private Task? _task;
+        private int _timeOut = 10;
 
         /// <summary>Current number of connected clients.</summary>
         public int ClientNums => _webSocketClients.Count;
@@ -48,7 +49,12 @@ namespace LHZ.WebSocket
                 }
             }
         }
-
+        public WebSocketServer(IPAddress ip, int port, int timeOut)
+        {
+            _ip = ip;
+            _port = port;
+            _timeOut = timeOut;
+        }
         public WebSocketServer(IPAddress ip, int port)
         {
             _ip = ip;
@@ -95,7 +101,7 @@ namespace LHZ.WebSocket
 #endif
                     try
                     {
-                        using (var httpContext = HttpContext.GetHttpContext(tcpClient))
+                        using (var httpContext = HttpContext.GetHttpContext(tcpClient, _timeOut))
                         {
                             OnUpgradeRequest?.Invoke(httpContext);
                             if (httpContext.WebSocketClient != null)
