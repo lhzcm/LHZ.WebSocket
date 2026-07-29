@@ -219,7 +219,7 @@ dotnet run
 **`EventHandler<TSender, TEventArgs>`** — Custom delegate defined in `LHZ.WebSocket.Delegates`, with `in` modifier on the sender parameter:
 
 ```csharp
-public delegate void EventHandler<TSender, TEventArgs>(in TSender sender, TEventArgs e);
+public delegate void EventHandler<in TSender, TEventArgs>(TSender sender, TEventArgs e);
 ```
 
 ### Enums

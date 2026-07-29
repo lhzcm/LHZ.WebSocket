@@ -219,7 +219,7 @@ dotnet run
 **`EventHandler<TSender, TEventArgs>`** — 定义在 `LHZ.WebSocket.Delegates` 中的自定义委托，sender 参数使用 `in` 修饰符：
 
 ```csharp
-public delegate void EventHandler<TSender, TEventArgs>(in TSender sender, TEventArgs e);
+public delegate void EventHandler<in TSender, TEventArgs>(TSender sender, TEventArgs e);
 ```
 
 ### 枚举
