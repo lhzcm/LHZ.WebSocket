@@ -77,7 +77,7 @@ namespace LHZ.WebSocket.Http
         /// Completes the WebSocket handshake: computes the accept key,
         /// sends HTTP 101 Switching Protocols, and creates a <see cref="WebSocketClient"/>.
         /// </summary>
-        public WebSocketClient HttpUpgrade()
+        public WebSocketClient HttpUpgrade(int capacity = 1024)
         {
             if (_webSocketClient != null)
                 return _webSocketClient;
@@ -102,7 +102,7 @@ namespace LHZ.WebSocket.Http
                 _response.Headers.Add("Sec-WebSocket-Accept", sha1);
                 _response.WriteToStream(_tcpClient.GetStream());
                 _status = 2;
-                _webSocketClient = new WebSocketClient(this);
+                _webSocketClient = new WebSocketClient(this, capacity);
                 return _webSocketClient;
             }
             else
@@ -128,7 +128,7 @@ namespace LHZ.WebSocket.Http
                     throw new Exception("The Sec-WebSocket-Accept has Error!");
                 }
                 _status = 2;
-                _webSocketClient = new WebSocketClient(this);
+                _webSocketClient = new WebSocketClient(this, capacity);
                 return _webSocketClient;
             }
         }

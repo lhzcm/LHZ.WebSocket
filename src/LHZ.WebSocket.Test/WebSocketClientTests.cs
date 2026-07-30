@@ -38,20 +38,18 @@ public class WebSocketClientTests : IDisposable
     #region Client Status Lifecycle (via Server)
 
     [Fact]
-    public void Status_ShouldBeOpend_AfterUpgrade()
+    public async Task Status_ShouldBeOpend_AfterUpgrade()
     {
         IWebSocketClient? connectedClient = null;
-        var clientReady = new ManualResetEventSlim(false);
         int port = GetPortRand();
         WebSocketServer server = new WebSocketServer(IPAddress.Loopback, port);
         server.OnUpgradeRequest += (ctx) =>
         {
             connectedClient = ctx.HttpUpgrade();
             connectedClient.OnClientClose += (_) => { };
-            clientReady.Set();
         };
         server.Start();
-
+        Task.Delay(100).GetAwaiter().GetResult();
         using var tcp = new TcpClient();
         tcp.Connect(IPAddress.Loopback, port);
         var stream = tcp.GetStream();
@@ -64,8 +62,7 @@ public class WebSocketClientTests : IDisposable
                       "Sec-WebSocket-Version: 13\r\n\r\n";
         stream.Write(Encoding.UTF8.GetBytes(request));
         stream.Flush();
-
-        Assert.True(clientReady.Wait(TimeSpan.FromSeconds(5)));
+        Task.Delay(100).GetAwaiter().GetResult();
         Assert.NotNull(connectedClient);
         Assert.Equal(LHZ.WebSocket.Enums.ClientStatus.Opend, connectedClient!.Status);
 

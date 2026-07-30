@@ -57,7 +57,16 @@ namespace LHZ.WebSocket
             _networkStream = httpContext.TcpClient.GetStream();
             _channel = Channel.CreateBounded<DataFrame>(1024);
         }
-        public static WebSocketClient CreateWebSocketClient(string url, System.Net.Http.Headers.HttpHeaders? headers = null, int timeOUt = 0)
+        /// <summary>
+        /// Create a websocket client
+        /// </summary>
+        /// <param name="url">connect url</param>
+        /// <param name="headers">http headers</param>
+        /// <param name="timeOUt">time out seconds</param>
+        /// <param name="capacity">send message queue capacity</param>
+        /// <returns></returns>
+        /// <exception cref="Exception"></exception>
+        public static WebSocketClient CreateWebSocketClient(string url, System.Net.Http.Headers.HttpHeaders? headers = null, int timeOUt = 0, int capacity = 1024)
         {
             if(!Uri.TryCreate(url, UriKind.Absolute, out Uri? result) || result == null)
             {
@@ -71,7 +80,7 @@ namespace LHZ.WebSocket
             headers.Add("Host", result.Host);
             using(var httpContext = Http.HttpContext.GetHttpContext(tcpClient, new HttpRequest(result.PathAndQuery, "GET", "HTTP/1.1", headers), timeOUt))
             {
-                return httpContext.HttpUpgrade();
+                return httpContext.HttpUpgrade(capacity);
             }
         }
         /// <summary>Sends a UTF-8 text message to the peer.</summary>
