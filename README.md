@@ -22,19 +22,19 @@ A lightweight, zero-dependency WebSocket library for .NET, implementing RFC 6455
 #### Package Manager
 
 ``` bash
-Install-Package LHZ.WebSocket -Version 1.0.1
+Install-Package LHZ.WebSocket -version 1.0.2
 ```
 
 #### .NET CLI
 
 ``` bash
-dotnet add package LHZ.WebSocket --Version 1.0.1
+dotnet add package LHZ.WebSocket --Version 1.0.2
 ```
 
 #### Package Reference
 
 ``` xml
-<PackageReference Include="LHZ.WebSocket" Version="1.0.1" />
+<PackageReference Include="LHZ.WebSocket" Version="1.0.2" />
 ```
 
 ### 2. Create and start a server
@@ -216,7 +216,7 @@ dotnet run
 
 ### Delegates
 
-**`EventHandler<TSender, TEventArgs>`** — Custom delegate defined in `LHZ.WebSocket.Delegates`, with `in` modifier on the sender parameter:
+**`EventHandler<TSender, TEventArgs>`** — Custom delegate defined in `LHZ.WebSocket.Delegates`
 
 ```csharp
 public delegate void EventHandler<in TSender, TEventArgs>(TSender sender, TEventArgs e);

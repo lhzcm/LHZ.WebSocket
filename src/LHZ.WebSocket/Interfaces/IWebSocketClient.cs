@@ -19,6 +19,10 @@ namespace LHZ.WebSocket.Interfaces
         public event EventHandler<IWebSocketClient, byte[]> OnPongRecived;
         /// <summary>Raised when this client disconnects (local or remote).</summary>
         public event System.Action<IWebSocketClient> OnClientClose;
+        /// <summary>
+        /// Client ID, which is a unique identifier for each WebSocket connection.
+        /// </summary>
+        public System.Guid ID { get; }
         /// <summary>Current connection status.</summary>
         public ClientStatus Status { get;}
         /// <summary>Sends a UTF-8 text message to the peer.</summary>

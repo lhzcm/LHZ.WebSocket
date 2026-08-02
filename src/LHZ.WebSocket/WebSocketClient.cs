@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -17,14 +18,34 @@ using LHZ.WebSocket.Interfaces;
 
 namespace LHZ.WebSocket
 {
+    /// <summary>
+    /// Represents a WebSocket client that manages the connection, sending, and receiving of WebSocket frames over a TCP stream.
+    /// </summary>
     public class WebSocketClient : IWebSocketClient
     {
-        protected readonly NetworkStream _networkStream;
+        private readonly Guid _id;
+        /// <summary>
+        /// The underlying TCP stream associated with this WebSocket client, used for sending and receiving data frames.
+        /// </summary>
+        protected readonly Stream _networkStream;
         /// <summary>Bounded channel for outgoing data frames (producer-consumer).</summary>
         protected readonly Channel<DataFrame> _channel;
-        protected readonly HttpContext _httpContext;
+        /// <summary>
+        /// The underlying HTTP context associated with this WebSocket client, which provides access to the TCP stream and request/response details.
+        /// </summary>
+        protected readonly IHttpContext _httpContext;
+        /// <summary>
+        /// CancellationTokenSource used to signal background tasks to stop when the client is closed or disposed.
+        /// </summary>
         protected readonly CancellationTokenSource _cts = new CancellationTokenSource();
-        public HttpContext HttpContext => _httpContext;
+        /// <summary>
+        /// Unique identifier for this WebSocket client, used for tracking and managing connections.
+        /// </summary>
+        public Guid ID => _id;
+        /// <summary>
+        /// The underlying HTTP context associated with this WebSocket client, which provides access to the TCP stream and request/response details.
+        /// </summary>
+        public IHttpContext HttpContext => _httpContext;
         /// <summary>Raised when a complete text message is received.</summary>
         public event Delegates.EventHandler<IWebSocketClient, string>? OnMessageReceived;
 
@@ -36,36 +57,55 @@ namespace LHZ.WebSocket
 
         /// <summary>Raised when this client disconnects (local or remote).</summary>
         public event Action<IWebSocketClient>? OnClientClose;
+        /// <summary>
+        /// Raised when a Ping frame is received from the peer.
+        /// </summary>
         public event Delegates.EventHandler<IWebSocketClient, byte[]>? OnPingRecived;
+        /// <summary>
+        /// Raised when a Pong frame is received from the peer.
+        /// </summary>
         public event Delegates.EventHandler<IWebSocketClient, byte[]>? OnPongRecived;
+        /// <summary>
+        /// ClientStatus represents the current state of the WebSocket connection.
+        /// </summary>
         protected ClientStatus _clientStatus;
 
         /// <summary>Current connection status.</summary>
         public ClientStatus Status => _clientStatus;
-
-        internal WebSocketClient(HttpContext httpContext, int capacity)
+        /// <summary>
+        /// Initializes a new instance of the WebSocketClient class with the specified HTTP context and channel capacity.
+        /// </summary>
+        /// <param name="httpContext">The HTTP context associated with the WebSocket connection.</param>
+        /// <param name="capacity">The maximum number of data frames that can be queued for sending.</param>
+        public WebSocketClient(IHttpContext httpContext, int capacity)
         {
             _clientStatus = ClientStatus.Connection;
             _httpContext = httpContext;
-            _networkStream = httpContext.TcpClient.GetStream();
+            _networkStream = httpContext.Stream;
             _channel = Channel.CreateBounded<DataFrame>(capacity);
-        }
-        internal WebSocketClient(HttpContext httpContext)
-        {
-            _clientStatus = ClientStatus.Connection;
-            _httpContext = httpContext;
-            _networkStream = httpContext.TcpClient.GetStream();
-            _channel = Channel.CreateBounded<DataFrame>(1024);
+            _id = Guid.NewGuid();
         }
         /// <summary>
-        /// Create a websocket client
+        /// Initializes a new instance of the WebSocketClient class with the specified HTTP context.
         /// </summary>
-        /// <param name="url">connect url</param>
-        /// <param name="headers">http headers</param>
-        /// <param name="timeOUt">time out seconds</param>
-        /// <param name="capacity">send message queue capacity</param>
-        /// <returns></returns>
-        /// <exception cref="Exception"></exception>
+        /// <param name="httpContext">The HTTP context associated with the WebSocket connection.</param>
+        public WebSocketClient(IHttpContext httpContext)
+        {
+            _clientStatus = ClientStatus.Connection;
+            _httpContext = httpContext;
+            _networkStream = httpContext.Stream;
+            _channel = Channel.CreateBounded<DataFrame>(1024);
+            _id = Guid.NewGuid();
+        }
+        /// <summary>
+        /// Creates a new WebSocket client instance.
+        /// </summary>
+        /// <param name="url">The URL to connect to.</param>
+        /// <param name="headers">The HTTP headers for the connection.</param>
+        /// <param name="timeOUt">The timeout for the connection.</param>
+        /// <param name="capacity">The capacity of the message queue.</param>
+        /// <returns>The created WebSocket client.</returns>
+        /// <exception cref="Exception">Thrown when there is an issue with the URL or connection.</exception>
         public static WebSocketClient CreateWebSocketClient(string url, System.Net.Http.Headers.HttpHeaders? headers = null, int timeOUt = 0, int capacity = 1024)
         {
             if(!Uri.TryCreate(url, UriKind.Absolute, out Uri? result) || result == null)
@@ -121,7 +161,16 @@ namespace LHZ.WebSocket
                 return;
             }
             _cts.Cancel();
-            _httpContext.TcpClient.Dispose();
+            if(_httpContext is HttpContext httpContext)
+            {
+                httpContext.TcpClient.Close();
+                httpContext.TcpClient.Dispose();
+            }
+            else
+            {
+                _networkStream.Close();
+                _networkStream.Dispose();
+            }
             _clientStatus = ClientStatus.Close;
             OnClientClose?.Invoke(this);
         }
@@ -241,14 +290,25 @@ namespace LHZ.WebSocket
                 }
             });
         }
+        /// <summary>
+        /// Sends Ping
+        /// </summary>
+        /// <param name="bytes"></param>
         public void Ping(byte[] bytes)
         {
             Send(OpCode.Ping, bytes);
         }
+        /// <summary>
+        /// Sends Pong
+        /// </summary>
+        /// <param name="bytes"></param>
         public void Pong(byte[] bytes)
         {
             Send(OpCode.Pong, bytes);
         }
+        /// <summary>
+        /// Disposes the WebSocket client, closing the connection and releasing resources.
+        /// </summary>
         public void Dispose()
         {
             Close();

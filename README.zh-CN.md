@@ -22,19 +22,19 @@
 #### Package Manager
 
 ``` bash
-Install-Package LHZ.WebSocket -Version 1.0.1
+Install-Package LHZ.WebSocket -version 1.0.2
 ```
 
 #### .NET CLI
 
 ``` bash
-dotnet add package LHZ.WebSocket --Version 1.0.1
+dotnet add package LHZ.WebSocket --Version 1.0.2
 ```
 
 #### Package Reference
 
 ``` xml
-<PackageReference Include="LHZ.WebSocket" Version="1.0.1" />
+<PackageReference Include="LHZ.WebSocket" Version="1.0.2" />
 ```
 
 ### 2. 创建并启动服务端
@@ -216,7 +216,7 @@ dotnet run
 
 ### 委托
 
-**`EventHandler<TSender, TEventArgs>`** — 定义在 `LHZ.WebSocket.Delegates` 中的自定义委托，sender 参数使用 `in` 修饰符：
+**`EventHandler<TSender, TEventArgs>`** — 定义在 `LHZ.WebSocket.Delegates` 中的自定义委托
 
 ```csharp
 public delegate void EventHandler<in TSender, TEventArgs>(TSender sender, TEventArgs e);

@@ -2,13 +2,13 @@
   <PropertyGroup>
     <TargetFrameworks>NET5;NET6;NET8;NET9;NET10.0</TargetFrameworks>
     <Nullable>enable</Nullable>
-    <Version>1.0.1</Version>
+    <Version>1.0.2</Version>
     <Authors>LHZ</Authors>
     <Description>A lightweight, zero-dependency WebSocket library for .NET, implementing RFC 6455 from the ground up using raw TcpListener/TcpClient. Supports both server-side and client-side WebSocket connections.</Description>
     <PackageIcon>logo.png</PackageIcon>
     <RepositoryType>Git</RepositoryType>
     <RepositoryUrl>https://github.com/lhzcm/LHZ.WebSocket</RepositoryUrl>
-    <PackageReleaseNotes>1.0.1：Fix Some Issues</PackageReleaseNotes>
+    <PackageReleaseNotes>1.0.2：Optimize project structure</PackageReleaseNotes>
     <GenerateDocumentationFile>True</GenerateDocumentationFile>
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
     <PackageReadmeFile>README.md</PackageReadmeFile>
@@ -16,6 +16,7 @@
     <PackageTags>websocket</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
+    <OutputType>Library</OutputType>
   </PropertyGroup>
   <ItemGroup>
     <None Include="..\..\README.md">
@@ -28,7 +29,7 @@
     </None>
     <None Include="logo.png">
       <Pack>True</Pack>
-      <PackagePath></PackagePath>
+      <PackagePath />
     </None>
   </ItemGroup>
 </Project>
