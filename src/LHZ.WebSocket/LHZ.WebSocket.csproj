@@ -2,13 +2,23 @@
   <PropertyGroup>
     <TargetFrameworks>NET5;NET6;NET8;NET9;NET10.0</TargetFrameworks>
     <Nullable>enable</Nullable>
-    <Version>1.0.2</Version>
+    <Version>1.1.1</Version>
     <Authors>LHZ</Authors>
     <Description>A lightweight, zero-dependency WebSocket library for .NET, implementing RFC 6455 from the ground up using raw TcpListener/TcpClient. Supports both server-side and client-side WebSocket connections.</Description>
     <PackageIcon>logo.png</PackageIcon>
     <RepositoryType>Git</RepositoryType>
     <RepositoryUrl>https://github.com/lhzcm/LHZ.WebSocket</RepositoryUrl>
-    <PackageReleaseNotes>1.0.2：Optimize project structure</PackageReleaseNotes>
+    <PackageReleaseNotes>1.1.1:
+- Fix: handshake handling is now concurrent, a slow client no longer blocks the accept loop
+- Fix: client-role connections now mask every outgoing frame (RFC 6455 §5.1), with a cryptographic masking key
+- Fix: the client collection is now per server instance instead of static
+- Fix: OnClientClose event subscription no longer leaks
+- Fix: masking no longer mutates the caller's buffer
+- Fix: client handshake can parse restricted response headers (e.g. Connection)
+- Add: server-side handshake validation (Sec-WebSocket-Key / Sec-WebSocket-Version 13) with HTTP 400 rejection
+- Add: automatic Close frame reply on receiving a Close frame
+- Add: fragmentation validation (reject orphan Continuation frames, control frames are never merged into messages)
+- Add: 10 interop tests (client-server round trip, masking, concurrent handshakes, handshake validation, close reply, fragmentation)</PackageReleaseNotes>
     <GenerateDocumentationFile>True</GenerateDocumentationFile>
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
     <PackageReadmeFile>README.md</PackageReadmeFile>
