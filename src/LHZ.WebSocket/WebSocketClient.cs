@@ -6,6 +6,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Channels;
@@ -70,6 +71,12 @@ namespace LHZ.WebSocket
         /// </summary>
         protected ClientStatus _clientStatus;
 
+        /// <summary>
+        /// True when this client plays the client role (outbound connection).
+        /// RFC 6455 §5.1 requires clients to mask every frame they send.
+        /// </summary>
+        private readonly bool _isClient;
+
         /// <summary>Current connection status.</summary>
         public ClientStatus Status => _clientStatus;
         /// <summary>
@@ -77,8 +84,18 @@ namespace LHZ.WebSocket
         /// </summary>
         /// <param name="httpContext">The HTTP context associated with the WebSocket connection.</param>
         /// <param name="capacity">The maximum number of data frames that can be queued for sending.</param>
-        public WebSocketClient(IHttpContext httpContext, int capacity)
+        public WebSocketClient(IHttpContext httpContext, int capacity) : this(httpContext, capacity, false)
         {
+        }
+        /// <summary>
+        /// Initializes a new instance of the WebSocketClient class with the specified HTTP context and channel capacity.
+        /// </summary>
+        /// <param name="httpContext">The HTTP context associated with the WebSocket connection.</param>
+        /// <param name="capacity">The maximum number of data frames that can be queued for sending.</param>
+        /// <param name="isClient">True when this connection plays the client role (outgoing frames must be masked).</param>
+        internal WebSocketClient(IHttpContext httpContext, int capacity, bool isClient)
+        {
+            _isClient = isClient;
             _clientStatus = ClientStatus.Connection;
             _httpContext = httpContext;
             _networkStream = httpContext.Stream;
@@ -138,8 +155,39 @@ namespace LHZ.WebSocket
         /// <summary>Enqueues a data frame onto the outgoing channel.</summary>
         protected void Send(OpCode opCode, byte[] bytes)
         {
-            var dataFrame = DataFrame.CreateDataFrame(opCode, true, null, bytes);
+            byte[]? maskingKey = null;
+            if (_isClient)
+            {
+                // RFC 6455 §5.1: a client MUST mask every frame it sends.
+                // Use a cryptographic RNG so the key is not predictable (§5.3).
+                maskingKey = new byte[4];
+#if NET6_0_OR_GREATER
+                RandomNumberGenerator.Fill(maskingKey);
+#else
+                using (var rng = RandomNumberGenerator.Create())
+                {
+                    rng.GetBytes(maskingKey);
+                }
+#endif
+            }
+            var dataFrame = DataFrame.CreateDataFrame(opCode, true, maskingKey, bytes);
             _channel.Writer.WriteAsync(dataFrame).GetAwaiter().GetResult();
+        }
+
+        /// <summary>
+        /// Sends a Close frame in reply to a peer's Close frame.
+        /// Failures are swallowed: the connection is already closing.
+        /// </summary>
+        private void SendCloseAck(byte[] payload)
+        {
+            try
+            {
+                Send(OpCode.Close, payload);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error sending close ack: {ex.Message}");
+            }
         }
 
         /// <summary>Starts the reader and sender background tasks.</summary>
@@ -193,29 +241,52 @@ namespace LHZ.WebSocket
                         {
                             break;
                         }
-                        // FIN frame received — either a single-frame message or end of a fragmented message
-                        if (item.FIN)
+
+                        // Control frames (Ping/Pong/Close) must not be fragmented and are
+                        // handled immediately; they never participate in message reassembly
+                        // (RFC 6455 §5.4, §5.5).
+                        if (item.Opcode == OpCode.Ping || item.Opcode == OpCode.Pong || item.Opcode == OpCode.Close)
+                        {
+                            if (!item.FIN)
+                            {
+                                throw new Exception("Control frame must not be fragmented");
+                            }
+                            ReceiveProcessing(item.Opcode, item.RSV1, item.RSV2, item.RSV3, item.Data.ToArray());
+                            continue;
+                        }
+
+                        // Continuation frame without a fragmented message in progress is a protocol error.
+                        if (item.Opcode == OpCode.Continuation)
                         {
                             if (dataFrames.Count == 0)
                             {
-                                ReceiveProcessing(item.Opcode, item.RSV1, item.RSV2, item.RSV3, item.Data.ToArray());
-                                continue;
+                                throw new Exception("Continuation frame received without a started message");
                             }
                             dataFrames.Add(item);
-
-                            // Concatenate all continuation frames into one payload
-                            int count = dataFrames.Sum(n => n.Data.Count);
-                            var bytes = new byte[count];
-                            int offset = 0;
-                            foreach (var dataFrame in dataFrames)
+                            if (item.FIN)
                             {
-                                Array.Copy(dataFrame.Data.ToArray(), 0, bytes, offset, dataFrame.Data.Count);
-                                offset += dataFrame.Data.Count;
+                                ReceiveFragmentedMessage(dataFrames);
+                                dataFrames.Clear();
                             }
-                            ReceiveProcessing(dataFrames[0].Opcode, dataFrames[0].RSV1, dataFrames[0].RSV2, dataFrames[0].RSV3, bytes);
-                            dataFrames.Clear();
+                            continue;
                         }
-                        dataFrames.Add(item);
+
+                        // A new Text/Binary frame while a fragmented message is still in progress
+                        // is a protocol error (RFC 6455 §5.4).
+                        if (dataFrames.Count > 0)
+                        {
+                            throw new Exception("New data frame received while a fragmented message is in progress");
+                        }
+
+                        // Data frame: single-frame message or the start of a fragmented one.
+                        if (item.FIN)
+                        {
+                            ReceiveProcessing(item.Opcode, item.RSV1, item.RSV2, item.RSV3, item.Data.ToArray());
+                        }
+                        else
+                        {
+                            dataFrames.Add(item);
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -224,6 +295,22 @@ namespace LHZ.WebSocket
                     Close();
                 }
             });
+        }
+
+        /// <summary>
+        /// Concatenates the fragments of a completed message and dispatches it once.
+        /// </summary>
+        private void ReceiveFragmentedMessage(List<DataFrame> dataFrames)
+        {
+            int count = dataFrames.Sum(n => n.Data.Count);
+            var bytes = new byte[count];
+            int offset = 0;
+            foreach (var dataFrame in dataFrames)
+            {
+                Array.Copy(dataFrame.Data.ToArray(), 0, bytes, offset, dataFrame.Data.Count);
+                offset += dataFrame.Data.Count;
+            }
+            ReceiveProcessing(dataFrames[0].Opcode, dataFrames[0].RSV1, dataFrames[0].RSV2, dataFrames[0].RSV3, bytes);
         }
 
         /// <summary>
@@ -237,13 +324,27 @@ namespace LHZ.WebSocket
                 case OpCode.Binary: OnBytesReceived?.Invoke(this, data); break;
                 case OpCode.Close:
                     {
-                        if (data.Length < 2)
+                        // RFC 6455 §5.5.1: a Close frame payload is either empty
+                        // (meaning 1005 No Status Received) or at least 2 bytes long.
+                        if (data.Length == 1)
                             throw new Exception("Close Frame has Error");
-                        // First two bytes = close status code (big-endian)
-                        CloseCode closeCode = (CloseCode)((data[0] << 8) | data[1]);
-                        if (!Enum.IsDefined<CloseCode>(closeCode))
-                            throw new Exception("CloseCode has not define");
-                        var closeMessage = new CloseMessage(closeCode, Encoding.UTF8.GetString(data, 2, data.Length - 2));
+                        CloseMessage closeMessage;
+                        if (data.Length >= 2)
+                        {
+                            // First two bytes = close status code (big-endian)
+                            CloseCode closeCode = (CloseCode)((data[0] << 8) | data[1]);
+                            if (!Enum.IsDefined<CloseCode>(closeCode))
+                                throw new Exception("CloseCode has not define");
+                            closeMessage = new CloseMessage(closeCode, Encoding.UTF8.GetString(data, 2, data.Length - 2));
+                        }
+                        else
+                        {
+                            closeMessage = new CloseMessage(CloseCode.NoStatusReceived, "");
+                        }
+                        // Auto-reply with a Close frame of our own (RFC 6455 §5.5.1: upon
+                        // receiving a Close frame, an endpoint sends a Close frame in response),
+                        // before raising the event so user code may Close() right away.
+                        SendCloseAck(data);
                         OnCloseRecived?.Invoke(this, closeMessage);
                         break;
                     }

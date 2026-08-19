@@ -34,9 +34,15 @@ namespace LHZ.WebSocket.Core
 
         /// <summary>
         /// Creates a new outgoing frame. Applies XOR masking if a key is provided.
+        /// The caller's buffer is never modified: masking is applied to a copy.
         /// </summary>
         private DataFrame(bool FIN, bool RSV1, bool RSV2, bool RSV3, OpCode opcode, byte[]? maskingKey, ArraySegment<byte> data)
         {
+            if (maskingKey != null && maskingKey.Length != 4)
+            {
+                throw new ArgumentException(nameof(maskingKey) + " is error data");
+            }
+            _maskingKey = maskingKey;
             _data = data;
             if (FIN)
             {
@@ -55,43 +61,47 @@ namespace LHZ.WebSocket.Core
                 _dataDataFrameFlag |= 0x10;
             }
             _dataDataFrameFlag |= (byte)opcode;
-            if (maskingKey != null && maskingKey.Length != 4)
-            {
-                throw new ArgumentException(nameof(maskingKey) + " is error data");
-            }
-            _maskingKey = maskingKey;
             if (_maskingKey != null)
             {
-                int offset = data.Offset;
-                var array = data.Array ?? Array.Empty<byte>();
-                for (int i = offset; i < data.Offset + data.Count; i++)
-                {
-                    array[i] ^= _maskingKey[(i - offset) % 4];
-                }
+                ApplyMask(ref _data, _maskingKey);
             }
         }
 
         /// <summary>
         /// Creates a frame from a pre-parsed header byte (used when reading incoming frames).
+        /// The caller's buffer is never modified: unmasking is applied to a copy.
         /// </summary>
         private DataFrame(byte dataDataFrameFlag, byte[]? maskingKey, ArraySegment<byte> data)
         {
-            _data = data;
-            _dataDataFrameFlag = dataDataFrameFlag;
             if (maskingKey != null && maskingKey.Length != 4)
             {
                 throw new ArgumentException(nameof(maskingKey) + " is error data");
             }
             _maskingKey = maskingKey;
+            _data = data;
+            _dataDataFrameFlag = dataDataFrameFlag;
             if (_maskingKey != null)
             {
-                int offset = data.Offset;
-                var array = data.Array ?? Array.Empty<byte>();
-                for (int i = offset; i < data.Offset + data.Count; i++)
-                {
-                    array[i] ^= _maskingKey[(i - offset) % 4];
-                }
+                ApplyMask(ref _data, _maskingKey);
             }
+        }
+
+        /// <summary>
+        /// XOR-masks (or unmask) the payload against the 4-byte key.
+        /// Works on a copy so the original buffer passed by the caller is left untouched.
+        /// </summary>
+        private static void ApplyMask(ref ArraySegment<byte> data, byte[] maskingKey)
+        {
+            var array = data.Array ?? Array.Empty<byte>();
+            int offset = data.Offset;
+            int count = data.Count;
+            var masked = new byte[count];
+            Array.Copy(array, offset, masked, 0, count);
+            for (int i = 0; i < count; i++)
+            {
+                masked[i] ^= maskingKey[i % 4];
+            }
+            data = new ArraySegment<byte>(masked);
         }
 
         /// <summary>Creates a frame from a raw header byte (used by DataFrameReader).</summary>

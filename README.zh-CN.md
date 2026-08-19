@@ -14,6 +14,8 @@
 - **有界通道** — 出站帧采用生产者-消费者模式，无无界队列
 - **事件驱动** — `OnMessageReceived`、`OnBytesReceived`、`OnCloseRecived`、`OnClientClose`、`OnPingRecived`、`OnPongRecived`
 - **多目标框架** — 支持 `net5.0`、`net6.0`、`net8.0`、`net9.0`、`net10.0`，启用可空引用类型
+- **握手超时** — 可配置超时时间，拒绝慢速 HTTP 升级请求
+- **xUnit 测试** — 全面的单元测试，覆盖帧解析、关闭消息、HTTP 请求头、服务端和客户端
 
 ## 快速开始
 
@@ -110,11 +112,13 @@ client.SendMessage("Hello World!");
 var server = new WebSocketServer(IPAddress.Loopback, 5000);
 ```
 
-### 5. 运行示例
+### 5. 运行浏览器示例
+
+打开 `chat-client.html` 在浏览器中体验，或运行单元测试：
 
 ```bash
-cd src/LHZ.WebSocket.TestConsole
-dotnet run
+cd src
+dotnet test
 ```
 
 ## API 参考
@@ -125,6 +129,7 @@ dotnet run
 |--------|-------------|
 | `WebSocketServer(int port)` | 绑定所有网络接口的指定端口 |
 | `WebSocketServer(IPAddress ip, int port)` | 绑定指定 IP 和端口 |
+| `WebSocketServer(IPAddress ip, int port, int timeOut)` | 绑定指定 IP 和端口，设置握手超时（秒） |
 | `Start()` | 开始接受连接 |
 | `Stop()` | 断开所有客户端并停止监听 |
 | `ClientNums` | 当前已连接客户端数量 |
@@ -136,6 +141,7 @@ dotnet run
 
 | 成员 | 说明 |
 |--------|-------------|
+| `ID` | 此连接的唯一 `Guid` |
 | `Status` | 当前 `ClientStatus`（Connection / Opend / Close） |
 | `SendMessage(string)` | 发送 UTF-8 文本帧 |
 | `SendByte(byte[])` | 发送二进制帧 |
@@ -143,6 +149,7 @@ dotnet run
 | `Pong(byte[])` | 发送 Pong 帧 |
 | `Open()` | 启动后台收发循环 |
 | `Close()` | 取消后台任务并释放 TCP 连接 |
+| `Dispose()` | `Close()` 的别名（实现 `IDisposable`） |
 | `OnMessageReceived` | `EventHandler<IWebSocketClient, string>` — 完整文本消息 |
 | `OnBytesReceived` | `EventHandler<IWebSocketClient, byte[]>` — 完整二进制消息 |
 | `OnCloseRecived` | `EventHandler<IWebSocketClient, CloseMessage>` — 收到关闭帧 |
@@ -165,14 +172,30 @@ dotnet run
 | `Close()` | 取消后台任务并释放 TCP 连接 |
 | `Dispose()` | `Close()` 的别名 |
 
-### `HttpContext`
+### `IHttpContext`（接口）
+
+| 成员 | 说明 |
+|--------|-------------|
+| `Request` | 解析后的 HTTP 请求（方法、URL、请求头） |
+| `Response` | HTTP 响应对象 |
+| `Stream` | 底层网络流 |
+| `Status` | 当前 `HttpContextStatus` |
+| `HttpUpgrade(int capacity = 1024)` | 完成 WebSocket 握手并返回 `WebSocketClient` |
+
+### `HttpContextBase`（抽象类）
+
+实现 `IHttpContext` 的基类。提供 HTTP 请求解析、超时处理以及 `HttpUpgrade()` 握手逻辑。具体的 `HttpContext` 类在此基础上增加了 `TcpClient` 支持。
+
+### `HttpContext`（密封类，继承 `HttpContextBase`）
 
 | 成员 | 说明 |
 |--------|-------------|
 | `Request` | 解析后的 HTTP 请求（方法、URL、请求头） |
 | `Response` | HTTP 响应对象（可为 null；服务端升级时填充） |
 | `TcpClient` | 底层 TCP 连接 |
-| `HttpUpgrade()` | 计算 `Sec-WebSocket-Accept`，写入 `101 Switching Protocols`，返回 `WebSocketClient` |
+| `Stream` | 底层网络流 |
+| `Status` | 当前 `HttpContextStatus`（NotInitialized / Initialized / Upgraded / TimedOut / Rejected） |
+| `HttpUpgrade(int capacity = 1024)` | 计算 `Sec-WebSocket-Accept`，写入 `101 Switching Protocols`，返回 `WebSocketClient` |
 | `WebSocketClient` | 升级后的客户端（调用 `HttpUpgrade()` 后填充） |
 | `Dispose()` | 若未执行升级则释放 TCP 客户端 |
 
@@ -232,6 +255,8 @@ public delegate void EventHandler<in TSender, TEventArgs>(TSender sender, TEvent
 
 **`ServerStatus`** — `Ready`、`Start`、`Closing`、`Closed`
 
+**`HttpContextStatus`** — `NotInitialized (0)`、`Initialized (1)`、`Upgraded (2)`、`TimedOut (-2)`、`Rejected (-1)`
+
 ## 架构
 
 ```mermaid
@@ -276,18 +301,24 @@ LHZ.WebSocket/
 │   │   ├── Enums/
 │   │   │   ├── ClientStatus.cs          # 客户端生命周期状态
 │   │   │   ├── CloseCode.cs             # RFC 6455 关闭状态码
+│   │   │   ├── HttpContextStatus.cs     # HTTP 上下文生命周期状态
 │   │   │   ├── OpCode.cs                # 帧操作码
 │   │   │   └── ServerStatus.cs          # 服务端生命周期状态
 │   │   ├── Http/
 │   │   │   ├── HttpContext.cs           # HTTP 升级握手（服务端 & 客户端）
+│   │   │   ├── HttpContextBase.cs       # 抽象基类，包含握手与超时逻辑
 │   │   │   ├── HttpHeaders.cs           # 内部请求头集合
 │   │   │   ├── HttpRequest.cs           # HTTP 请求行 & 请求头解析/写入
 │   │   │   └── HttpResponse.cs          # HTTP 响应构建 & 解析
 │   │   └── Interfaces/
+│   │       ├── IHttpContext.cs          # HTTP 上下文接口
 │   │       └── IWebSocketClient.cs      # WebSocket 客户端接口
-│   ├── LHZ.WebSocket.TestConsole/       # 客户端 & 服务端示例
-│   │   └── Program.cs
+│   ├── LHZ.WebSocket.Test/              # xUnit 测试项目
+│   │   ├── WebSocketServerTests.cs
+│   │   ├── WebSocketClientTests.cs
+│   │   └── Core/ / Http/
 │   └── LHZ.WebSocket.slnx              # 解决方案文件
+├── chat-client.html                     # 浏览器端多人在线聊天示例
 ├── test-client.html                     # 浏览器端测试客户端
 ├── LICENSE
 ├── README.md

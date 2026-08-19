@@ -14,6 +14,8 @@ A lightweight, zero-dependency WebSocket library for .NET, implementing RFC 6455
 - **Bounded channel** — producer-consumer pattern for outgoing frames; no unbounded queues
 - **Event-driven** — `OnMessageReceived`, `OnBytesReceived`, `OnCloseRecived`, `OnClientClose`, `OnPingRecived`, `OnPongRecived`
 - **Multi-targeting** — `net5.0`, `net6.0`, `net8.0`, `net9.0`, `net10.0` with nullable reference types enabled
+- **Handshake timeout** — configurable timeout to reject slow HTTP upgrade requests
+- **xUnit tested** — comprehensive unit tests for frame parsing, close messages, HTTP headers, server, and client
 
 ## Quick Start
 
@@ -110,11 +112,13 @@ client.SendMessage("Hello World!");
 var server = new WebSocketServer(IPAddress.Loopback, 5000);
 ```
 
-### 5. Run the demo
+### 5. Try the browser demo
+
+Open `chat-client.html` in a browser, or run the unit tests:
 
 ```bash
-cd src/LHZ.WebSocket.TestConsole
-dotnet run
+cd src
+dotnet test
 ```
 
 ## API Reference
@@ -125,6 +129,7 @@ dotnet run
 |--------|-------------|
 | `WebSocketServer(int port)` | Bind to all interfaces on the given port |
 | `WebSocketServer(IPAddress ip, int port)` | Bind to a specific IP and port |
+| `WebSocketServer(IPAddress ip, int port, int timeOut)` | Bind to a specific IP and port with a handshake timeout (seconds) |
 | `Start()` | Begin accepting connections |
 | `Stop()` | Disconnect all clients and stop listening |
 | `ClientNums` | Current number of connected clients |
@@ -136,6 +141,7 @@ dotnet run
 
 | Member | Description |
 |--------|-------------|
+| `ID` | Unique `Guid` for this connection |
 | `Status` | Current `ClientStatus` (Connection / Opend / Close) |
 | `SendMessage(string)` | Send a UTF-8 text frame |
 | `SendByte(byte[])` | Send a binary frame |
@@ -143,6 +149,7 @@ dotnet run
 | `Pong(byte[])` | Send a Pong frame |
 | `Open()` | Start the background send/receive loops |
 | `Close()` | Cancel tasks and dispose the TCP connection |
+| `Dispose()` | Alias for `Close()` (implements `IDisposable`) |
 | `OnMessageReceived` | `EventHandler<IWebSocketClient, string>` — complete text message |
 | `OnBytesReceived` | `EventHandler<IWebSocketClient, byte[]>` — complete binary message |
 | `OnCloseRecived` | `EventHandler<IWebSocketClient, CloseMessage>` — close frame received |
@@ -165,14 +172,30 @@ dotnet run
 | `Close()` | Cancel tasks and dispose the TCP connection |
 | `Dispose()` | Alias for `Close()` |
 
-### `HttpContext`
+### `IHttpContext` (interface)
+
+| Member | Description |
+|--------|-------------|
+| `Request` | Parsed HTTP request (method, URL, headers) |
+| `Response` | HTTP response object |
+| `Stream` | The underlying network stream |
+| `Status` | Current `HttpContextStatus` |
+| `HttpUpgrade(int capacity = 1024)` | Completes the WebSocket handshake and returns the `WebSocketClient` |
+
+### `HttpContextBase` (abstract class)
+
+Base class implementing `IHttpContext`. Provides HTTP request parsing, timeout handling, and the `HttpUpgrade()` handshake logic. The concrete `HttpContext` class adds `TcpClient` support.
+
+### `HttpContext` (sealed, extends `HttpContextBase`)
 
 | Member | Description |
 |--------|-------------|
 | `Request` | Parsed HTTP request (method, URL, headers) |
 | `Response` | HTTP response object (nullable; populated for server-side upgrades) |
 | `TcpClient` | The underlying TCP connection |
-| `HttpUpgrade()` | Computes `Sec-WebSocket-Accept`, writes `101 Switching Protocols`, returns the `WebSocketClient` |
+| `Stream` | The underlying network stream |
+| `Status` | Current `HttpContextStatus` (NotInitialized / Initialized / Upgraded / TimedOut / Rejected) |
+| `HttpUpgrade(int capacity = 1024)` | Computes `Sec-WebSocket-Accept`, writes `101 Switching Protocols`, returns the `WebSocketClient` |
 | `WebSocketClient` | The upgraded client (populated after `HttpUpgrade()`) |
 | `Dispose()` | Disposes the TCP client if no upgrade was performed |
 
@@ -232,6 +255,8 @@ public delegate void EventHandler<in TSender, TEventArgs>(TSender sender, TEvent
 
 **`ServerStatus`** — `Ready`, `Start`, `Closing`, `Closed`
 
+**`HttpContextStatus`** — `NotInitialized (0)`, `Initialized (1)`, `Upgraded (2)`, `TimedOut (-2)`, `Rejected (-1)`
+
 ## Architecture
 
 ```mermaid
@@ -276,18 +301,24 @@ LHZ.WebSocket/
 │   │   ├── Enums/
 │   │   │   ├── ClientStatus.cs          # Client lifecycle states
 │   │   │   ├── CloseCode.cs             # RFC 6455 close status codes
+│   │   │   ├── HttpContextStatus.cs     # HTTP context lifecycle states
 │   │   │   ├── OpCode.cs                # Frame opcodes
 │   │   │   └── ServerStatus.cs          # Server lifecycle states
 │   │   ├── Http/
 │   │   │   ├── HttpContext.cs           # HTTP upgrade handshake (server & client)
+│   │   │   ├── HttpContextBase.cs       # Abstract base with handshake & timeout logic
 │   │   │   ├── HttpHeaders.cs           # Internal header collection
 │   │   │   ├── HttpRequest.cs           # HTTP request-line & header parser/writer
 │   │   │   └── HttpResponse.cs          # HTTP response builder & parser
 │   │   └── Interfaces/
+│   │       ├── IHttpContext.cs          # HTTP context interface
 │   │       └── IWebSocketClient.cs      # WebSocket client interface
-│   ├── LHZ.WebSocket.TestConsole/       # Client & server demo
-│   │   └── Program.cs
+│   ├── LHZ.WebSocket.Test/              # xUnit test project
+│   │   ├── WebSocketServerTests.cs
+│   │   ├── WebSocketClientTests.cs
+│   │   └── Core/ / Http/
 │   └── LHZ.WebSocket.slnx              # Solution file
+├── chat-client.html                     # Browser-based multi-user chat demo
 ├── test-client.html                     # Browser-based test client
 ├── LICENSE
 ├── README.md

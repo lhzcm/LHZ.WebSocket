@@ -86,10 +86,30 @@ namespace LHZ.WebSocket.Http
             }
             if (_response != null)
             {
+                // Validate the upgrade request (RFC 6455 §4.2.1): Sec-WebSocket-Key must be
+                // present and Sec-WebSocket-Version must be 13. Reject with 400 otherwise.
+                if (!Request.Headers.TryGetValues("Sec-WebSocket-Key", out var secWebSocketKeys) ||
+                    string.IsNullOrEmpty(secWebSocketKeys.FirstOrDefault()) ||
+                    !Request.Headers.TryGetValues("Sec-WebSocket-Version", out var versionValues) ||
+                    !versionValues.Contains("13"))
+                {
+                    var badResponse = new HttpResponse(HttpStatusCode.BadRequest, "HTTP/1.1");
+                    badResponse.Headers.Add("Sec-WebSocket-Version", "13");
+                    try
+                    {
+                        badResponse.WriteToStream(_stream);
+                    }
+                    catch (Exception)
+                    {
+                        // Client already gone; nothing more to do.
+                    }
+                    _status = HttpContextStatus.Rejected;
+                    throw new InvalidOperationException("Invalid WebSocket upgrade request: missing Sec-WebSocket-Key or Sec-WebSocket-Version != 13");
+                }
                 _response.Headers.Add("Upgrade", "websocket");
                 _response.Headers.Add("Connection", "Upgrade");
                 // Compute Sec-WebSocket-Accept per RFC 6455 Section 4.2.2
-                string secWebSocketKey = Request.Headers.GetValues("Sec-WebSocket-Key").First();
+                string secWebSocketKey = secWebSocketKeys.First();
                 var sha1 = Convert.ToBase64String(
                     SHA1.HashData(
                         System.Text.Encoding.UTF8.GetBytes(
@@ -113,7 +133,7 @@ namespace LHZ.WebSocket.Http
                 {
                     throw new Exception($"HttpStatusCode Not Supported : {_response.StatusCode}");
                 }
-                if (!_response.Headers.GetValues("Upgrade").Contains("websocket"))
+                if (!_response.Headers.GetValues("Upgrade").Contains("websocket", StringComparer.OrdinalIgnoreCase))
                 {
                     throw new Exception($"Upgrade Not Supported : {String.Join(',', _response.Headers.GetValues("Upgrade"))}");
                 }
@@ -123,7 +143,7 @@ namespace LHZ.WebSocket.Http
                     throw new Exception("The Sec-WebSocket-Accept has Error!");
                 }
                 _status = HttpContextStatus.Upgraded;
-                _webSocketClient = new WebSocketClient(this, capacity);
+                _webSocketClient = new WebSocketClient(this, capacity, true);
                 return _webSocketClient;
             }
         }

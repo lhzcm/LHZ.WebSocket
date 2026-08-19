@@ -21,10 +21,10 @@ public class WebSocketClientTests : IDisposable
     {
        lock (this)
         {
-            int port = new Random().Next(50000, 60000);
+            int port = new Random().Next(30000, 49000);
             while (_usedPorts.Contains(port))
             {
-                port = new Random().Next(50000, 60000);
+                port = new Random().Next(30000, 49000);
             }
             _usedPorts.Add(port);
             return port;
