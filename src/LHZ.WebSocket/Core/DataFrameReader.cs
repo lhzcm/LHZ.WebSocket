@@ -53,7 +53,7 @@ namespace LHZ.WebSocket.Core
             var header = StreamReadExact(2);
             int payloadLength = (byte)(header[1] & 0x7F);
             bool masked = (header[1] & 0x80) == 0x80;
-            byte[]? maskingKey = null;
+            UInt32 maskingKey = 0;
 
             // Extended payload length: 2 bytes for 126, 8 bytes for 127
             if (payloadLength == 126)
@@ -73,9 +73,10 @@ namespace LHZ.WebSocket.Core
 
             if (masked)
             {
-                maskingKey = StreamReadExact(4);
+                var maskingKeyArray = StreamReadExact(4).AsSpan();
+                maskingKey = DataFrame.MaskingKeyToUint32(ref maskingKeyArray);
             }
-            return DataFrame.CreateDataFrame(header[0], maskingKey, StreamReadExact(payloadLength));
+            return DataFrame.CreateDataFrame(header[0], StreamReadExact(payloadLength), maskingKey);
         }
 
         /// <summary>
@@ -86,7 +87,7 @@ namespace LHZ.WebSocket.Core
             var header = await StreamReadExactAsync(2, cancellationToken);
             int payloadLength = (byte)(header[1] & 0x7F);
             bool masked = (header[1] & 0x80) == 0x80;
-            byte[]? maskingKey = null;
+            UInt32 maskingKey = 0;
 
             if (payloadLength == 126)
             {
@@ -105,9 +106,10 @@ namespace LHZ.WebSocket.Core
 
             if (masked)
             {
-                maskingKey = await StreamReadExactAsync(4, cancellationToken);
+                var maskingKeyArray = (await StreamReadExactAsync(4, cancellationToken)).AsSpan();
+                maskingKey = DataFrame.MaskingKeyToUint32(ref maskingKeyArray);
             }
-            return DataFrame.CreateDataFrame(header[0], maskingKey, await StreamReadExactAsync(payloadLength, cancellationToken));
+            return DataFrame.CreateDataFrame(header[0], await StreamReadExactAsync(payloadLength, cancellationToken), maskingKey);
         }
 
         /// <summary>Reads exactly <paramref name="count"/> bytes from the stream (sync).</summary>

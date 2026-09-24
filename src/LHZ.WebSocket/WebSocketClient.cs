@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
@@ -146,31 +147,35 @@ namespace LHZ.WebSocket
             Send(OpCode.Text, System.Text.Encoding.UTF8.GetBytes(message));
         }
 
-        /// <summary>Sends raw binary data to the peer.</summary>
+        /// <summary>
+        /// Sends raw binary data to the peer.
+        /// <paramref name="bytes">send data, warring: this array will be masked so the value will change</paramref>
+        /// </summary>
         public void SendByte(byte[] bytes)
         {
             Send(OpCode.Binary, bytes);
         }
-
+    
         /// <summary>Enqueues a data frame onto the outgoing channel.</summary>
         protected void Send(OpCode opCode, byte[] bytes)
         {
-            byte[]? maskingKey = null;
+            UInt32 maskingKey = 0;
             if (_isClient)
             {
                 // RFC 6455 §5.1: a client MUST mask every frame it sends.
                 // Use a cryptographic RNG so the key is not predictable (§5.3).
-                maskingKey = new byte[4];
+                Span<byte> maskingKeyArray = stackalloc byte[4];
 #if NET6_0_OR_GREATER
-                RandomNumberGenerator.Fill(maskingKey);
+                RandomNumberGenerator.Fill(maskingKeyArray);
 #else
                 using (var rng = RandomNumberGenerator.Create())
                 {
-                    rng.GetBytes(maskingKey);
+                    rng.GetBytes(maskingKeyArray);
                 }
 #endif
+                maskingKey = DataFrame.MaskingKeyToUint32(ref maskingKeyArray);
             }
-            var dataFrame = DataFrame.CreateDataFrame(opCode, true, maskingKey, bytes);
+            var dataFrame = DataFrame.CreateDataFrame(opCode, true, bytes, maskingKey);
             _channel.Writer.WriteAsync(dataFrame).GetAwaiter().GetResult();
         }
 
@@ -374,18 +379,28 @@ namespace LHZ.WebSocket
         {
             Task.Run(async () =>
             {
+                byte[] dataFrameHeaderBytes = null;
                 try
                 {
                     while (!_cts.Token.IsCancellationRequested)
                     {
                         var dataFrame = await _channel.Reader.ReadAsync(_cts.Token);
-                        await _networkStream.WriteAsync(dataFrame.DataFrameHeader, _cts.Token);
+                        int dataFrameHeaderLength = dataFrame.DataFrameHeaderLength;
+                        // use ArayPool reduce GC Collect
+                        dataFrameHeaderBytes = ArrayPool<byte>.Shared.Rent(dataFrameHeaderLength);
+                        dataFrame.DataFrameHeaderFull(ref dataFrameHeaderBytes);
+                        await _networkStream.WriteAsync(dataFrameHeaderBytes, 0, dataFrameHeaderLength, _cts.Token);
                         await _networkStream.WriteAsync(dataFrame.Data, _cts.Token);
                         await _networkStream.FlushAsync(_cts.Token);
+                        ArrayPool<byte>.Shared.Return(dataFrameHeaderBytes);
                     }
                 }
                 catch (Exception ex)
                 {
+                    if (dataFrameHeaderBytes != null)
+                    {
+                        ArrayPool<byte>.Shared.Return(dataFrameHeaderBytes);
+                    }
                     Console.WriteLine($"Error Sending data: {ex.Message}");
                     Close();
                 }

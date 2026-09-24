@@ -16,14 +16,10 @@ namespace LHZ.WebSocket.Test;
 /// - Close 帧自动回执
 /// - 分片合法性(独立 Continuation 帧导致断开;分片消息中穿插控制帧正确重组)
 /// </summary>
-public class InteropTests : IDisposable
+public class InteropTests
 {
     private readonly HashSet<int> _usedPorts = new HashSet<int>();
     private readonly object _portLock = new object();
-
-    public void Dispose()
-    {
-    }
 
     private int GetPortRand()
     {
@@ -258,7 +254,7 @@ public class InteropTests : IDisposable
             };
             client.Open();
             var payload = new byte[] { 0x00, 0xDE, 0xAD, 0xBE, 0xEF, 0xFF };
-            client.SendByte(payload);
+            client.SendByte((byte[])payload.Clone());
 
             Assert.True(echoReceived.Wait(TimeSpan.FromSeconds(5)),
                 "client should receive the binary echo from the server");

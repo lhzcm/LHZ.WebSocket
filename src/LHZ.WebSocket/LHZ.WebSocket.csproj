@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFrameworks>NET5;NET6;NET8;NET9;NET10.0</TargetFrameworks>
+    <LangVersion>13.0</LangVersion>
     <Nullable>enable</Nullable>
     <Version>1.1.1</Version>
     <Authors>LHZ</Authors>

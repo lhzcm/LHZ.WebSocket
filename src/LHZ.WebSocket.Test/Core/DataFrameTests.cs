@@ -14,7 +14,7 @@ public class DataFrameTests
     public void CreateDataFrame_TextFrame_ShouldSetCorrectOpcodeAndFin()
     {
         var data = System.Text.Encoding.UTF8.GetBytes("Hello");
-        var frame = DataFrame.CreateDataFrame(OpCode.Text, true, null, data);
+        var frame = DataFrame.CreateDataFrame(OpCode.Text, true, data);
 
         Assert.Equal(OpCode.Text, frame.Opcode);
         Assert.True(frame.FIN);
@@ -26,7 +26,7 @@ public class DataFrameTests
     public void CreateDataFrame_BinaryFrame_ShouldSetCorrectOpcode()
     {
         var data = new byte[] { 0x01, 0x02, 0x03, 0x04 };
-        var frame = DataFrame.CreateDataFrame(OpCode.Binary, true, null, data);
+        var frame = DataFrame.CreateDataFrame(OpCode.Binary, true, data);
 
         Assert.Equal(OpCode.Binary, frame.Opcode);
         Assert.True(frame.FIN);
@@ -38,7 +38,7 @@ public class DataFrameTests
     public void CreateDataFrame_CloseFrame_ShouldSetCorrectOpcode()
     {
         var data = new byte[] { 0x03, 0xE8 }; // 1000 = Normal
-        var frame = DataFrame.CreateDataFrame(OpCode.Close, true, null, data);
+        var frame = DataFrame.CreateDataFrame(OpCode.Close, true, data);
 
         Assert.Equal(OpCode.Close, frame.Opcode);
         Assert.True(frame.FIN);
@@ -48,7 +48,7 @@ public class DataFrameTests
     public void CreateDataFrame_PingFrame_ShouldSetCorrectOpcode()
     {
         var data = new byte[] { 0x70, 0x69, 0x6E, 0x67 }; // "ping"
-        var frame = DataFrame.CreateDataFrame(OpCode.Ping, true, null, data);
+        var frame = DataFrame.CreateDataFrame(OpCode.Ping, true, data);
 
         Assert.Equal(OpCode.Ping, frame.Opcode);
         Assert.True(frame.FIN);
@@ -58,7 +58,7 @@ public class DataFrameTests
     public void CreateDataFrame_PongFrame_ShouldSetCorrectOpcode()
     {
         var data = new byte[] { 0x70, 0x6F, 0x6E, 0x67 }; // "pong"
-        var frame = DataFrame.CreateDataFrame(OpCode.Pong, true, null, data);
+        var frame = DataFrame.CreateDataFrame(OpCode.Pong, true, data);
 
         Assert.Equal(OpCode.Pong, frame.Opcode);
         Assert.True(frame.FIN);
@@ -68,7 +68,7 @@ public class DataFrameTests
     public void CreateDataFrame_ContinuationFrame_ShouldSetCorrectOpcode()
     {
         var data = new byte[] { 0x01, 0x02 };
-        var frame = DataFrame.CreateDataFrame(OpCode.Continuation, false, null, data);
+        var frame = DataFrame.CreateDataFrame(OpCode.Continuation, false, data);
 
         Assert.Equal(OpCode.Continuation, frame.Opcode);
         Assert.False(frame.FIN);
@@ -78,8 +78,9 @@ public class DataFrameTests
     public void CreateDataFrame_WithMaskingKey_ShouldMaskPayload()
     {
         var original = new byte[] { 0x01, 0x02, 0x03, 0x04 };
-        var maskingKey = new byte[] { 0x10, 0x20, 0x30, 0x40 };
-        var frame = DataFrame.CreateDataFrame(OpCode.Binary, true, maskingKey, original);
+        var maskingKeyArry = (new byte[] { 0x10, 0x20, 0x30, 0x40 }).AsSpan();
+        var maskingKey =  DataFrame.MaskingKeyToUint32(ref maskingKeyArry);
+        var frame = DataFrame.CreateDataFrame(OpCode.Binary, true, original, maskingKey);
 
         Assert.True(frame.Masked);
         Assert.Equal(maskingKey, frame.MaskingKey);
@@ -96,23 +97,13 @@ public class DataFrameTests
     }
 
     [Fact]
-    public void CreateDataFrame_InvalidMaskingKeyLength_ShouldThrow()
-    {
-        var data = new byte[] { 0x01 };
-        var badKey = new byte[] { 0x01, 0x02, 0x03 }; // 只有 3 字节
-
-        Assert.Throws<ArgumentException>(() =>
-            DataFrame.CreateDataFrame(OpCode.Text, true, badKey, data));
-    }
-
-    [Fact]
     public void CreateDataFrame_NullMaskingKey_ShouldNotBeMasked()
     {
         var data = new byte[] { 0x01, 0x02, 0x03 };
-        var frame = DataFrame.CreateDataFrame(OpCode.Text, true, null, data);
+        var frame = DataFrame.CreateDataFrame(OpCode.Text, true, data);
 
         Assert.False(frame.Masked);
-        Assert.Null(frame.MaskingKey);
+        Assert.Equal(0u, frame.MaskingKey);
         Assert.Equal(data, frame.Data.ToArray());
     }
 
@@ -123,7 +114,7 @@ public class DataFrameTests
     [Fact]
     public void CreateDataFrame_DefaultRsvBits_ShouldBeFalse()
     {
-        var frame = DataFrame.CreateDataFrame(OpCode.Text, true, null, new byte[] { 0x01 });
+        var frame = DataFrame.CreateDataFrame(OpCode.Text, true, new byte[] { 0x01 });
 
         Assert.False(frame.RSV1);
         Assert.False(frame.RSV2);
@@ -138,7 +129,7 @@ public class DataFrameTests
     public void DataFrameHeader_SmallPayload_ShouldBe2Bytes()
     {
         var data = new byte[125]; // 125 字节（7-bit 范围最大值）
-        var frame = DataFrame.CreateDataFrame(OpCode.Text, true, null, data);
+        var frame = DataFrame.CreateDataFrame(OpCode.Text, true, data);
 
         var header = frame.DataFrameHeader;
         Assert.Equal(2, header.Length);
@@ -150,8 +141,9 @@ public class DataFrameTests
     public void DataFrameHeader_SmallPayloadWithMask_ShouldBe6Bytes()
     {
         var data = new byte[10];
-        var maskingKey = new byte[] { 0xAA, 0xBB, 0xCC, 0xDD };
-        var frame = DataFrame.CreateDataFrame(OpCode.Text, true, maskingKey, data);
+        var maskingKeyArray = (new byte[] { 0xAA, 0xBB, 0xCC, 0xDD }).AsSpan();
+        var maskingKey = DataFrame.MaskingKeyToUint32(ref maskingKeyArray);
+        var frame = DataFrame.CreateDataFrame(OpCode.Text, true, data, maskingKey);
 
         var header = frame.DataFrameHeader;
         Assert.Equal(6, header.Length);  // 2 + 4 mask
@@ -167,7 +159,7 @@ public class DataFrameTests
     public void DataFrameHeader_MediumPayload126_ShouldBe4Bytes()
     {
         var data = new byte[126]; // 触发 16-bit 扩展长度
-        var frame = DataFrame.CreateDataFrame(OpCode.Binary, true, null, data);
+        var frame = DataFrame.CreateDataFrame(OpCode.Binary, true, data);
 
         var header = frame.DataFrameHeader;
         Assert.Equal(4, header.Length); // 2 + 2 extended
@@ -181,8 +173,9 @@ public class DataFrameTests
     public void DataFrameHeader_MediumPayload126WithMask_ShouldBe8Bytes()
     {
         var data = new byte[200];
-        var maskingKey = new byte[] { 0x01, 0x02, 0x03, 0x04 };
-        var frame = DataFrame.CreateDataFrame(OpCode.Text, true, maskingKey, data);
+        var maskingKeyArray = (new byte[] { 0x01, 0x02, 0x03, 0x04 }).AsSpan();
+        var maskingKey = DataFrame.MaskingKeyToUint32(ref maskingKeyArray);
+        var frame = DataFrame.CreateDataFrame(OpCode.Text, true, data, maskingKey);
 
         var header = frame.DataFrameHeader;
         Assert.Equal(8, header.Length); // 2 + 2 extended + 4 mask
@@ -195,7 +188,7 @@ public class DataFrameTests
     public void DataFrameHeader_LargePayload65536_ShouldBe10Bytes()
     {
         var data = new byte[65536]; // 需要 64-bit 扩展长度
-        var frame = DataFrame.CreateDataFrame(OpCode.Binary, true, null, data);
+        var frame = DataFrame.CreateDataFrame(OpCode.Binary, true, data);
 
         var header = frame.DataFrameHeader;
         Assert.Equal(10, header.Length); // 2 + 8 extended
@@ -224,7 +217,7 @@ public class DataFrameTests
         new Random(42).NextBytes(data);
         using var ms = new MemoryStream(data);
 
-        var frames = DataFrame.CreateDataFrame(OpCode.Binary, null, ms, 100).ToList();
+        var frames = DataFrame.CreateDataFrame(OpCode.Binary, ms, 0, 100).ToList();
 
         Assert.Single(frames);
         Assert.True(frames[0].FIN);
@@ -239,7 +232,7 @@ public class DataFrameTests
         new Random(42).NextBytes(data);
         using var ms = new MemoryStream(data);
 
-        var frames = DataFrame.CreateDataFrame(OpCode.Text, null, ms, 100).ToList();
+        var frames = DataFrame.CreateDataFrame(OpCode.Text, ms, 0, 100).ToList();
 
         Assert.Equal(3, frames.Count); // 100 + 100 + 50
 
@@ -271,7 +264,7 @@ public class DataFrameTests
         new Random(42).NextBytes(data);
         using var ms = new MemoryStream(data);
 
-        var frames = DataFrame.CreateDataFrame(OpCode.Binary, null, ms, 100).ToList();
+        var frames = DataFrame.CreateDataFrame(OpCode.Binary, ms, 0, 100).ToList();
 
         Assert.Equal(3, frames.Count);
 
@@ -293,7 +286,7 @@ public class DataFrameTests
     {
         using var ms = new MemoryStream(Array.Empty<byte>());
 
-        var frames = DataFrame.CreateDataFrame(OpCode.Text, null, ms).ToList();
+        var frames = DataFrame.CreateDataFrame(OpCode.Text, ms).ToList();
 
         Assert.Single(frames);
         Assert.True(frames[0].FIN);
@@ -301,14 +294,30 @@ public class DataFrameTests
     }
 
     [Fact]
+    public void CreateDataFrame_EnMasked_To_UnMasked_AreEqual()
+    {
+        var data = new byte[250];
+        new Random(42).NextBytes(data);
+        var maskingKeyArray = (new byte[] { 0x0F, 0x1E, 0x2D, 0x3C }).AsSpan();
+        var maskingKey = DataFrame.MaskingKeyToUint32(ref maskingKeyArray);
+
+        var frame = DataFrame.CreateDataFrame(OpCode.Binary, true, (byte[])data.Clone(), maskingKey);
+        var unMaskedFrame = DataFrame.CreateDataFrame(OpCode.Binary, true, frame.Data.ToArray(), maskingKey);
+        var unMaskedData = unMaskedFrame.Data.ToArray();
+        Assert.Equal(data, unMaskedData);
+    }
+
+    [Fact]
     public void CreateDataFrame_FromStream_WithMasking_AllFramesShouldBeMasked()
     {
         var data = new byte[250];
         new Random(42).NextBytes(data);
-        var maskingKey = new byte[] { 0x0F, 0x1E, 0x2D, 0x3C };
+        var maskingKeyArray = (new byte[] { 0x0F, 0x1E, 0x2D, 0x3C }).AsSpan();
+        var maskingKey = DataFrame.MaskingKeyToUint32(ref maskingKeyArray);
+
         using var ms = new MemoryStream(data);
 
-        var frames = DataFrame.CreateDataFrame(OpCode.Text, maskingKey, ms, 100).ToList();
+        var frames = DataFrame.CreateDataFrame(OpCode.Text, ms, maskingKey, 100).ToList();
 
         Assert.All(frames, f => Assert.True(f.Masked));
         Assert.All(frames, f => Assert.Equal(maskingKey, f.MaskingKey));
@@ -321,7 +330,7 @@ public class DataFrameTests
     [Fact]
     public void DataDataFrameFlag_ShouldReflectFinAndOpcode()
     {
-        var frame = DataFrame.CreateDataFrame(OpCode.Close, true, null, new byte[] { 0x03, 0xE8 });
+        var frame = DataFrame.CreateDataFrame(OpCode.Close, true, new byte[] { 0x03, 0xE8 });
 
         // FIN=1(0x80) + Close=0x8 => 0x88
         Assert.Equal(0x88, frame.DataDataFrameFlag);
@@ -330,11 +339,25 @@ public class DataFrameTests
     [Fact]
     public void DataDataFrameFlag_NonFin_ShouldNotHaveFinBit()
     {
-        var frame = DataFrame.CreateDataFrame(OpCode.Text, false, null, new byte[] { 0x41 });
+        var frame = DataFrame.CreateDataFrame(OpCode.Text, false, new byte[] { 0x41 });
 
         // FIN=0 + Text=0x1 => 0x01
         Assert.Equal(0x01, frame.DataDataFrameFlag);
     }
-
+    public static bool ByteArrayValueEqual(ArraySegment<byte> source, ArraySegment<byte> target)
+    {
+        if(source.Count != target.Count)
+        {
+            return false;
+        }
+        for(int i = 0; i < source.Count; i++)
+        {
+            if(source[source.Offset + i] != target[source.Offset +i])
+            {
+                return false;
+            }
+        }
+        return true;
+    }
     #endregion
 }

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection.Metadata.Ecma335;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using LHZ.WebSocket.Enums;
@@ -11,7 +12,7 @@ namespace LHZ.WebSocket.Core
     /// Represents a WebSocket data frame as defined in RFC 6455.
     /// Handles masking/unmasking and header serialization.
     /// </summary>
-    public class DataFrame
+    public struct DataFrame
     {
         // Frame layout (RFC 6455 Section 5.2):
         //  0                   1                   2                   3
@@ -24,10 +25,13 @@ namespace LHZ.WebSocket.Core
         // +-+-+-+-+-------+-+-------------+ - - - - - - - - - - - - - - - +
 
         /// <summary>First byte of the frame: FIN(1) + RSV1-3(3) + OpCode(4).</summary>
-        private byte _dataDataFrameFlag;
+        private readonly byte _dataDataFrameFlag;
 
-        /// <summary>4-byte masking key (null if not masked).</summary>
-        private byte[]? _maskingKey;
+        /// <summary>
+        /// use uint32 as 4-byte masking key (0 is not masked).
+        /// map: [0x01, 0x02, 0x03, 0x04] -> 0x04030201
+        /// </summary>
+        private readonly UInt32 _maskingKey;
 
         /// <summary>Payload data segment.</summary>
         private ArraySegment<byte> _data;
@@ -36,12 +40,8 @@ namespace LHZ.WebSocket.Core
         /// Creates a new outgoing frame. Applies XOR masking if a key is provided.
         /// The caller's buffer is never modified: masking is applied to a copy.
         /// </summary>
-        private DataFrame(bool FIN, bool RSV1, bool RSV2, bool RSV3, OpCode opcode, byte[]? maskingKey, ArraySegment<byte> data)
+        private DataFrame(bool FIN, bool RSV1, bool RSV2, bool RSV3, OpCode opcode, UInt32 maskingKey, ArraySegment<byte> data)
         {
-            if (maskingKey != null && maskingKey.Length != 4)
-            {
-                throw new ArgumentException(nameof(maskingKey) + " is error data");
-            }
             _maskingKey = maskingKey;
             _data = data;
             if (FIN)
@@ -61,58 +61,55 @@ namespace LHZ.WebSocket.Core
                 _dataDataFrameFlag |= 0x10;
             }
             _dataDataFrameFlag |= (byte)opcode;
-            if (_maskingKey != null)
-            {
-                ApplyMask(ref _data, _maskingKey);
-            }
+            ApplyMask(_data, _maskingKey);
         }
 
         /// <summary>
         /// Creates a frame from a pre-parsed header byte (used when reading incoming frames).
         /// The caller's buffer is never modified: unmasking is applied to a copy.
         /// </summary>
-        private DataFrame(byte dataDataFrameFlag, byte[]? maskingKey, ArraySegment<byte> data)
+        private DataFrame(byte dataDataFrameFlag, ArraySegment<byte> data, UInt32 maskingKey = 0)
         {
-            if (maskingKey != null && maskingKey.Length != 4)
-            {
-                throw new ArgumentException(nameof(maskingKey) + " is error data");
-            }
             _maskingKey = maskingKey;
             _data = data;
             _dataDataFrameFlag = dataDataFrameFlag;
-            if (_maskingKey != null)
-            {
-                ApplyMask(ref _data, _maskingKey);
-            }
+            ApplyMask(_data, _maskingKey);
         }
 
         /// <summary>
         /// XOR-masks (or unmask) the payload against the 4-byte key.
         /// Works on a copy so the original buffer passed by the caller is left untouched.
         /// </summary>
-        private static void ApplyMask(ref ArraySegment<byte> data, byte[] maskingKey)
+        private static void ApplyMask(ArraySegment<byte> data, UInt32 maskingKey)
         {
-            var array = data.Array ?? Array.Empty<byte>();
-            int offset = data.Offset;
-            int count = data.Count;
-            var masked = new byte[count];
-            Array.Copy(array, offset, masked, 0, count);
-            for (int i = 0; i < count; i++)
+            var array = data.Array;
+            if(array == null || maskingKey == 0)
             {
-                masked[i] ^= maskingKey[i % 4];
+                return;
             }
-            data = new ArraySegment<byte>(masked);
+            // Apply reverse byte rotation first
+            var maskingKeyTemp = (maskingKey << (data.Offset % 4 * 8)) | (maskingKey >> (32 - data.Offset % 4 * 8));
+            for (int i = data.Offset; i < data.Count; i++)
+            {
+                array[i] ^= (byte)(maskingKeyTemp >> ((i % 4) << 3));
+            }
         }
 
         /// <summary>Creates a frame from a raw header byte (used by DataFrameReader).</summary>
-        internal static DataFrame CreateDataFrame(byte dataDataFrameFlag, byte[]? maskingKey, byte[] data)
+        internal static DataFrame CreateDataFrame(byte dataDataFrameFlag, byte[] data, UInt32 maskingKey = 0)
         {
             var dataArray = new ArraySegment<byte>(data);
-            return new DataFrame(dataDataFrameFlag, maskingKey, dataArray);
+            return new DataFrame(dataDataFrameFlag, dataArray, maskingKey);
         }
 
-        /// <summary>Creates an outgoing frame with the given opcode and payload.</summary>
-        public static DataFrame CreateDataFrame(OpCode opcode, bool FIN, byte[]? maskingKey, byte[] data)
+        /// <summary>
+        /// Creates an outgoing frame with the given opcode and payload.
+        /// <paramref name="opcode"/>
+        /// <paramref name="FIN"/>
+        /// <paramref name="data">send data, warring: if maskingKey > 0 then this array will be masked so the value will change</paramref>
+        /// <paramref name="maskingKey"/>
+        /// </summary>
+        public static DataFrame CreateDataFrame(OpCode opcode, bool FIN, byte[] data, UInt32 maskingKey = 0)
         {
             var dataArray = new ArraySegment<byte>(data);
             return new DataFrame(FIN, false, false, false, opcode, maskingKey, dataArray);
@@ -126,7 +123,7 @@ namespace LHZ.WebSocket.Core
         /// <param name="maskingKey">Optional 4-byte masking key.</param>
         /// <param name="data">The payload stream to read from.</param>
         /// <param name="dataDataFrameLength">Max payload per frame (default 65535).</param>
-        public static IEnumerable<DataFrame> CreateDataFrame(OpCode opcode, byte[]? maskingKey, Stream data, int dataDataFrameLength = ushort.MaxValue)
+        public static IEnumerable<DataFrame> CreateDataFrame(OpCode opcode, Stream data, UInt32 maskingKey = 0, int dataDataFrameLength = ushort.MaxValue)
         {
             byte[] bytes = new byte[dataDataFrameLength];
             int readNums = 0;
@@ -167,19 +164,16 @@ namespace LHZ.WebSocket.Core
         public OpCode Opcode => (OpCode)(_dataDataFrameFlag & 0x0F);
 
         /// <summary>True if the payload is masked.</summary>
-        public bool Masked => _maskingKey != null;
+        public bool Masked => _maskingKey > 0;
 
         /// <summary>The 4-byte masking key, or null.</summary>
-        public byte[]? MaskingKey => _maskingKey;
+        public UInt32 MaskingKey => _maskingKey;
 
         /// <summary>Raw first byte of the frame header.</summary>
         public byte DataDataFrameFlag => _dataDataFrameFlag;
 
-        /// <summary>
-        /// Serializes the frame header (2–14 bytes) according to RFC 6455.
-        /// Supports payload lengths up to 2^63-1 (127-bit extended length).
-        /// </summary>
-        public byte[] DataFrameHeader
+        /// <summary>Get dataframe header length</summary>
+        public int DataFrameHeaderLength
         {
             get
             {
@@ -188,67 +182,96 @@ namespace LHZ.WebSocket.Core
                 {
                     length += 4;
                 }
-                byte[] header;
-
                 // 64-bit extended payload length (127)
                 if (_data.Count > ushort.MaxValue)
                 {
                     length += 8;
-                    header = new byte[length];
-                    header[0] = _dataDataFrameFlag;
-                    header[1] = 127;
-                    header[6] = (byte)((_data.Count >> 24) & 0xFF);
-                    header[7] = (byte)((_data.Count >> 16) & 0xFF);
-                    header[8] = (byte)((_data.Count >> 8) & 0xFF);
-                    header[9] = (byte)((_data.Count) & 0xFF);
-                    if (_maskingKey != null)
-                    {
-                        header[1] |= 0x80;
-                        header[10] = _maskingKey[0];
-                        header[11] = _maskingKey[1];
-                        header[12] = _maskingKey[2];
-                        header[13] = _maskingKey[3];
-                    }
-                    return header;
                 }
-
                 // 16-bit extended payload length (126)
-                if (_data.Count > 125)
+                else if (_data.Count > 125)
                 {
                     length += 2;
-                    header = new byte[length];
-                    header[0] = _dataDataFrameFlag;
-                    header[1] = 126;
-                    header[2] = (byte)((_data.Count >> 8) & 0xFF);
-                    header[3] = (byte)((_data.Count) & 0xFF);
-                    if (_maskingKey != null)
-                    {
-                        header[1] |= 0x80;
-                        header[4] = _maskingKey[0];
-                        header[5] = _maskingKey[1];
-                        header[6] = _maskingKey[2];
-                        header[7] = _maskingKey[3];
-                    }
-                    return header;
                 }
-
-                // 7-bit payload length (≤125)
-                header = new byte[length];
-                header[0] = _dataDataFrameFlag;
-                header[1] = (byte)Data.Count;
-                if (_maskingKey != null)
-                {
-                    header[1] |= 0x80;
-                    header[2] = _maskingKey[0];
-                    header[3] = _maskingKey[1];
-                    header[4] = _maskingKey[2];
-                    header[5] = _maskingKey[3];
-                }
+                return length;
+            }
+        }
+        /// <summary>
+        /// Serializes the frame header (2–14 bytes) according to RFC 6455.
+        /// Supports payload lengths up to 2^63-1 (127-bit extended length).
+        /// </summary>
+        public byte[] DataFrameHeader
+        {
+            get
+            {
+                byte[] header = new byte[DataFrameHeaderLength];
+                DataFrameHeaderFull(ref header);
                 return header;
+            }
+        }
+        /// <summary>
+        /// bytes array will be fulled dataframe header data
+        /// <paramref name="bytes">the bytes array which be fulled</paramref>
+        /// </summary>
+        /// <exception cref="Exception"></exception>
+        public void DataFrameHeaderFull(ref byte[] bytes)
+        {
+            if (DataFrameHeaderLength > bytes.Length)
+            {
+                throw new Exception($"array length must be large then DataFrameHeaderLength = {DataFrameHeaderLength}");
+            }
+            int curIndex = 0;
+            // 64-bit extended payload length (127)
+            if (_data.Count > ushort.MaxValue)
+            {
+                bytes[0] = _dataDataFrameFlag;
+                bytes[1] = 127;
+                bytes[6] = (byte)((_data.Count >> 24) & 0xFF);
+                bytes[7] = (byte)((_data.Count >> 16) & 0xFF);
+                bytes[8] = (byte)((_data.Count >> 8) & 0xFF);
+                bytes[9] = (byte)((_data.Count) & 0xFF);
+                curIndex = 9;
+            }
+            // 16-bit extended payload length (126)
+            else if (_data.Count > 125)
+            {
+                bytes[0] = _dataDataFrameFlag;
+                bytes[1] = 126;
+                bytes[2] = (byte)((_data.Count >> 8) & 0xFF);
+                bytes[3] = (byte)((_data.Count) & 0xFF);
+                curIndex = 3;
+            }
+            // 7-bit payload length (≤125)
+            else
+            {
+                bytes[0] = _dataDataFrameFlag;
+                bytes[1] = (byte)Data.Count;
+                curIndex = 1;
+            }
+            if (Masked)
+            {
+                bytes[1] |= 0x80;
+                bytes[++curIndex] = (byte)_maskingKey;
+                bytes[++curIndex] = (byte)(_maskingKey >> 8);
+                bytes[++curIndex] = (byte)(_maskingKey >> 16);
+                bytes[++curIndex] = (byte)(_maskingKey >> 24);
             }
         }
 
         /// <summary>The payload data.</summary>
         public ArraySegment<byte> Data => _data;
+        /// <summary>
+        /// MaskingKey bytes array to uint32 
+        /// </summary>
+        /// <param name="bytes">MaskingKey bytes arra</param>
+        /// <returns>uint32 MaskingKey</returns>
+        public static UInt32 MaskingKeyToUint32(ref Span<byte> bytes)
+        {
+            UInt32 maskingKey = 0;
+            maskingKey |= bytes[0];
+            maskingKey |= ((UInt32)bytes[1]) << 8;
+            maskingKey |= ((UInt32)bytes[2]) << 16;
+            maskingKey |= ((UInt32)bytes[3]) << 24;
+            return maskingKey;
+        }
     }
 }
