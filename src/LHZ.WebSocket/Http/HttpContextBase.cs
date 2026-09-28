@@ -3,35 +3,67 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Security.Cryptography;
+using System.Threading;
 using System.Threading.Tasks;
 using LHZ.WebSocket.Enums;
 using LHZ.WebSocket.Interfaces;
 
 namespace LHZ.WebSocket.Http
 {
+    /// <summary>
+    /// Holds the HTTP handshake state for one connection and implements both the server-side
+    /// and the client-side halves of the WebSocket upgrade.
+    /// </summary>
     public class HttpContextBase : IHttpContext
     {
-        private HttpRequest _request;
+        // Null only between construction and Init, which parses the request from the stream
+        // when the caller did not supply one (server role).
+        private HttpRequest _request = null!;
         private HttpResponse? _response;
         private Stream _stream;
-        private HttpContextStatus _status = HttpContextStatus.NotInitialized;
-        private WebSocketClient _webSocketClient = null!;
-        private Task? _timeOutExecuter = null;
+        private int _status = (int)HttpContextStatus.NotInitialized;
+        private WebSocketClient? _webSocketClient;
+        private CancellationTokenSource? _timeOutCts;
         /// <summary>The upgraded WebSocket client (null before <see cref="HttpUpgrade"/> is called).</summary>
-        public WebSocketClient WebSocketClient => _webSocketClient;
+        public WebSocketClient WebSocketClient => _webSocketClient!;
+        /// <summary>The underlying connection stream.</summary>
         public Stream Stream => _stream;
+        /// <summary>
+        /// Moves the context to Initialized, arms the handshake timeout, and parses the
+        /// request from the stream when the caller did not supply one.
+        /// </summary>
+        /// <param name="timeOut">Handshake timeout in seconds; 0 or less disables it.</param>
         protected void Init(int timeOut)
         {
-            _status = HttpContextStatus.Initialized;
+            _status = (int)HttpContextStatus.Initialized;
             if (timeOut > 0)
             {
-                _timeOutExecuter = Task.Run(async () =>
+                // The timer is cancelled as soon as the handshake leaves the Initialized state,
+                // so a completed connection does not keep a pending delay alive.
+                _timeOutCts = new CancellationTokenSource();
+                var token = _timeOutCts.Token;
+                _ = Task.Run(async () =>
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(timeOut));
-                    if (_status == HttpContextStatus.Initialized)
+                    try
                     {
-                        _status = HttpContextStatus.TimedOut;
-                        _stream.Dispose();
+                        await Task.Delay(TimeSpan.FromSeconds(timeOut), token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        return;
+                    }
+                    // Only the thread that wins this transition may dispose the stream, so the
+                    // timeout can never race a successful upgrade that is mid-write.
+                    if (TryTransition(HttpContextStatus.Initialized, HttpContextStatus.TimedOut))
+                    {
+                        try
+                        {
+                            _stream.Dispose();
+                        }
+                        catch (Exception)
+                        {
+                            // The stream is already gone; nothing to do.
+                        }
                     }
                 });
             }
@@ -40,10 +72,34 @@ namespace LHZ.WebSocket.Http
                 _request = HttpRequest.GetRequestFromStream(_stream);
             }
         }
-        protected HttpContextBase(Stream stream, HttpRequest request, HttpResponse? response)
+
+        /// <summary>
+        /// Atomically moves the context from one status to another.
+        /// Returns false when the context was in some other state.
+        /// </summary>
+        private bool TryTransition(HttpContextStatus from, HttpContextStatus to)
+        {
+            return Interlocked.CompareExchange(ref _status, (int)to, (int)from) == (int)from;
+        }
+
+        /// <summary>Stops the handshake timeout timer, if one is running.</summary>
+        private void CancelTimeOut()
+        {
+            var cts = Interlocked.Exchange(ref _timeOutCts, null);
+            if (cts != null)
+            {
+                cts.Cancel();
+                cts.Dispose();
+            }
+        }
+        /// <summary>Creates a context over the given stream.</summary>
+        /// <param name="stream">The connection stream.</param>
+        /// <param name="request">The outgoing request (client role), or null to parse one from the stream.</param>
+        /// <param name="response">The response to send (server role), or null for the client role.</param>
+        protected HttpContextBase(Stream stream, HttpRequest? request, HttpResponse? response)
         {
             _stream = stream;
-            _request = request;
+            _request = request!;
             _response = response;
         }
         /// <summary>Parses the HTTP request from the TCP stream and returns a new context.</summary>
@@ -53,12 +109,6 @@ namespace LHZ.WebSocket.Http
             context.Init(timeOut);
             return context;
         }
-        // public static HttpContextBase GetHttpContext(Stream stream, int timeOut)
-        // {
-        //     var context = new HttpContextBase(stream, null, new HttpResponse(HttpStatusCode.SwitchingProtocols, "HTTP/1.1"));
-        //     context.Init(timeOut);
-        //     return context;
-        // }
         /// <summary>The parsed HTTP upgrade request.</summary>
         public HttpRequest Request => _request;
         /// <summary>
@@ -66,7 +116,8 @@ namespace LHZ.WebSocket.Http
         /// </summary>
         public HttpResponse? Response => _response;
 
-        public HttpContextStatus Status => _status;
+        /// <summary>The current handshake state.</summary>
+        public HttpContextStatus Status => (HttpContextStatus)_status;
 
         /// <summary>
         /// Completes the WebSocket handshake: computes the accept key,
@@ -76,14 +127,17 @@ namespace LHZ.WebSocket.Http
         {
             if (_webSocketClient != null)
                 return _webSocketClient;
-            if (_status == HttpContextStatus.TimedOut)
+            // Claim the handshake atomically and stop the timeout timer, so the timer cannot
+            // dispose the stream while the response below is being written.
+            if (!TryTransition(HttpContextStatus.Initialized, HttpContextStatus.Upgrading))
             {
-                throw new TimeoutException($"HttpContext Connect Time Out!");
-            }
-            else if (_status != HttpContextStatus.Initialized)
-            {
+                if (Status == HttpContextStatus.TimedOut)
+                {
+                    throw new TimeoutException($"HttpContext Connect Time Out!");
+                }
                 throw new InvalidOperationException($"Current Status is not allow Upgrade Operation");
             }
+            CancelTimeOut();
             if (_response != null)
             {
                 // Validate the upgrade request (RFC 6455 §4.2.1): Sec-WebSocket-Key must be
@@ -103,7 +157,7 @@ namespace LHZ.WebSocket.Http
                     {
                         // Client already gone; nothing more to do.
                     }
-                    _status = HttpContextStatus.Rejected;
+                    _status = (int)HttpContextStatus.Rejected;
                     throw new InvalidOperationException("Invalid WebSocket upgrade request: missing Sec-WebSocket-Key or Sec-WebSocket-Version != 13");
                 }
                 _response.Headers.Add("Upgrade", "websocket");
@@ -116,16 +170,28 @@ namespace LHZ.WebSocket.Http
                             secWebSocketKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
                 _response.Headers.Add("Sec-WebSocket-Accept", sha1);
                 _response.WriteToStream(_stream);
-                _status = HttpContextStatus.Upgraded;
+                _status = (int)HttpContextStatus.Upgraded;
                 _webSocketClient = new WebSocketClient(this, capacity);
                 return _webSocketClient;
             }
             else
             {
-                _request.Headers.Add("Connection", "Upgrade");
-                _request.Headers.Add("Upgrade", "websocket");
-                _request.Headers.Add("Sec-WebSocket-Version", "13");
-                _request.Headers.Add("Sec-WebSocket-Key", Convert.ToBase64String(Guid.NewGuid().ToByteArray()));
+                _request.Headers.TryAddWithoutValidation("Connection", "Upgrade");
+                _request.Headers.TryAddWithoutValidation("Upgrade", "websocket");
+                _request.Headers.TryAddWithoutValidation("Sec-WebSocket-Version", "13");
+                // RFC 6455 §4.1: the key must be 16 freshly generated random bytes. Guid.NewGuid
+                // is not a random source, so draw from the cryptographic RNG instead.
+                var nonce = new byte[16];
+#if NET6_0_OR_GREATER
+                RandomNumberGenerator.Fill(nonce);
+#else
+                using (var rng = RandomNumberGenerator.Create())
+                {
+                    rng.GetBytes(nonce);
+                }
+#endif
+                string clientKey = Convert.ToBase64String(nonce);
+                _request.Headers.TryAddWithoutValidation("Sec-WebSocket-Key", clientKey);
 
                 _request.WriteToStream(_stream);
                 _response = HttpResponse.GetRequestFromStream(_stream);
@@ -133,16 +199,22 @@ namespace LHZ.WebSocket.Http
                 {
                     throw new Exception($"HttpStatusCode Not Supported : {_response.StatusCode}");
                 }
-                if (!_response.Headers.GetValues("Upgrade").Contains("websocket", StringComparer.OrdinalIgnoreCase))
+                if (!_response.Headers.TryGetValues("Upgrade", out var upgradeValues) ||
+                    !upgradeValues.Contains("websocket", StringComparer.OrdinalIgnoreCase))
                 {
-                    throw new Exception($"Upgrade Not Supported : {String.Join(',', _response.Headers.GetValues("Upgrade"))}");
+                    throw new Exception($"Upgrade Not Supported : {String.Join(",", upgradeValues ?? Enumerable.Empty<string>())}");
                 }
-                var secWebSocketAccept = _response.Headers.GetValues("Sec-WebSocket-Accept").First();
-                if (secWebSocketAccept != Convert.ToBase64String(SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(_request.Headers.GetValues("Sec-WebSocket-Key").First() + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))))
+                if (!_response.Headers.TryGetValues("Sec-WebSocket-Accept", out var acceptValues) ||
+                    acceptValues.FirstOrDefault() == null)
+                {
+                    throw new Exception("The response is missing the Sec-WebSocket-Accept header!");
+                }
+                var secWebSocketAccept = acceptValues.First();
+                if (secWebSocketAccept != Convert.ToBase64String(SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(clientKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))))
                 {
                     throw new Exception("The Sec-WebSocket-Accept has Error!");
                 }
-                _status = HttpContextStatus.Upgraded;
+                _status = (int)HttpContextStatus.Upgraded;
                 _webSocketClient = new WebSocketClient(this, capacity, true);
                 return _webSocketClient;
             }
@@ -153,10 +225,21 @@ namespace LHZ.WebSocket.Http
         /// </summary>
         public void Dispose()
         {
-            if (_status == HttpContextStatus.Initialized)
+            CancelTimeOut();
+            // Only tear the stream down when no upgrade took ownership of it. An upgrade that
+            // was claimed but then threw (status Upgrading) also has no owner, so it is
+            // cleaned up here too.
+            if (TryTransition(HttpContextStatus.Initialized, HttpContextStatus.Rejected) ||
+                (_webSocketClient == null && TryTransition(HttpContextStatus.Upgrading, HttpContextStatus.Rejected)))
             {
-                _status = HttpContextStatus.Rejected;
-                _stream.Dispose();
+                try
+                {
+                    _stream.Dispose();
+                }
+                catch (Exception)
+                {
+                    // The stream is already gone; nothing to do.
+                }
             }
         }
     }

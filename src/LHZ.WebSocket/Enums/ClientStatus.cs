@@ -9,7 +9,7 @@ namespace LHZ.WebSocket.Enums
         Connection = 1,
 
         /// <summary>Handshake complete, ready to send and receive frames.</summary>
-        Opend = 2,
+        Opened = 2,
 
         /// <summary>Connection closed (locally or by peer).</summary>
         Close = 3

@@ -2,10 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
-using System.Net.Http.Headers;
 using System.Net.Sockets;
-using System.Security.Cryptography;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using LHZ.WebSocket.Enums;
@@ -34,6 +31,24 @@ namespace LHZ.WebSocket
         /// <summary>Raised after a client completes the WebSocket handshake and is ready.</summary>
         public event Action<IWebSocketClient>? OnClientConnected;
 
+        /// <summary>
+        /// Raised when the accept loop or a handshake fails. When no handler is attached the
+        /// error is written to the console instead.
+        /// </summary>
+        public event Action<Exception>? OnError;
+
+        /// <summary>Current server status.</summary>
+        public ServerStatus Status
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _serverStatus;
+                }
+            }
+        }
+
         /// <summary>Clients connected to this server instance.</summary>
         private readonly HashSet<IWebSocketClient> _webSocketClients = new HashSet<IWebSocketClient>();
 
@@ -60,18 +75,27 @@ namespace LHZ.WebSocket
                 }
             }
         }
+        /// <summary>Binds to a specific IP and port with a handshake timeout.</summary>
+        /// <param name="ip">The local address to listen on.</param>
+        /// <param name="port">The local port to listen on.</param>
+        /// <param name="timeOut">Handshake timeout in seconds; 0 or less disables it.</param>
         public WebSocketServer(IPAddress ip, int port, int timeOut)
         {
             _ip = ip;
             _port = port;
             _timeOut = timeOut;
         }
+        /// <summary>Binds to a specific IP and port with the default 10 second handshake timeout.</summary>
+        /// <param name="ip">The local address to listen on.</param>
+        /// <param name="port">The local port to listen on.</param>
         public WebSocketServer(IPAddress ip, int port)
         {
             _ip = ip;
             _port = port;
         }
 
+        /// <summary>Binds to all interfaces on the given port.</summary>
+        /// <param name="port">The local port to listen on.</param>
         public WebSocketServer(int port)
         {
             _ip = IPAddress.Any;
@@ -124,7 +148,7 @@ namespace LHZ.WebSocket
             }
             catch (Exception ex)
             {
-                Console.WriteLine(ex.Message + ex.StackTrace);
+                ReportError(ex);
             }
             finally
             {
@@ -155,14 +179,39 @@ namespace LHZ.WebSocket
                     {
                         OnClientConnect(httpContext.WebSocketClient);
                         httpContext.WebSocketClient.Open();
+                        // Raised after the handshake completed and the client is reading,
+                        // so a handler may send straight away.
+                        OnClientConnected?.Invoke(httpContext.WebSocketClient);
                     }
                 }
             }
             catch (Exception ex)
             {
                 tcpClient?.Dispose();
-                Console.WriteLine(ex.Message + ex.StackTrace);
+                ReportError(ex);
             }
+        }
+
+        /// <summary>
+        /// Surfaces a failure through <see cref="OnError"/>, falling back to the console when
+        /// nothing is subscribed.
+        /// </summary>
+        private void ReportError(Exception ex)
+        {
+            var handler = OnError;
+            if (handler != null)
+            {
+                try
+                {
+                    handler.Invoke(ex);
+                    return;
+                }
+                catch (Exception)
+                {
+                    // A faulty error handler must not mask the original failure.
+                }
+            }
+            Console.WriteLine($"LHZ.WebSocket server error: {ex.Message}{Environment.NewLine}{ex.StackTrace}");
         }
 
         /// <summary>
@@ -192,6 +241,13 @@ namespace LHZ.WebSocket
             _cancellationTokenSource?.Dispose();
             _cancellationTokenSource = null;
             _task = null;
+            // The accept loop's finally normally sets Closed. If it had already faulted, or
+            // did not finish inside the timeout, force the transition anyway: leaving the
+            // server stuck in Closing would make Start() refuse to run again.
+            lock (_lock)
+            {
+                _serverStatus = ServerStatus.Closed;
+            }
         }
 
         /// <summary>Registers a newly upgraded client and subscribes to its close event.</summary>

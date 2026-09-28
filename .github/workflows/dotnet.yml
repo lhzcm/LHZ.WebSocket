@@ -1,0 +1,32 @@
+# This workflow will build a .NET project
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-net
+
+name: .NET
+
+on:
+  push:
+    branches: [ "master", "dev" ]
+  pull_request:
+    branches: [ "master", "dev" ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        # The test project multi-targets net8.0 and net10.0, so both runtimes must be
+        # present or the older test host cannot start.
+        dotnet-version: |
+          8.0.x
+          10.0.x
+    - name: Restore dependencies
+      run: dotnet restore src/LHZ.WebSocket.slnx
+    - name: Build
+      run: dotnet build src/LHZ.WebSocket.slnx --no-restore
+    - name: Test
+      run: dotnet test src/LHZ.WebSocket.slnx --no-build --verbosity normal

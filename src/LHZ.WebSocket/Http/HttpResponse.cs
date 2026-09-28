@@ -6,6 +6,9 @@ using System.Text;
 
 namespace LHZ.WebSocket.Http
 {
+    /// <summary>
+    /// Builds and parses an HTTP response: the status line plus all headers.
+    /// </summary>
     public class HttpResponse
     {
         /// <summary>
@@ -26,18 +29,27 @@ namespace LHZ.WebSocket.Http
         {
             Headers = new HttpHeaders();
         }
+        /// <summary>Creates a response to send.</summary>
+        /// <param name="statusCode">The HTTP status code.</param>
+        /// <param name="httpVersion">HTTP version string, e.g. HTTP/1.1.</param>
+        /// <param name="headers">Response headers; a new empty collection is used when null.</param>
         public HttpResponse(HttpStatusCode statusCode, string httpVersion, System.Net.Http.Headers.HttpHeaders? headers = null)
         {
             StatusCode = statusCode;
             HttpVersion = httpVersion;
             Headers = headers ?? new HttpHeaders();
         }
+        /// <summary>Reads and parses a response from the stream.</summary>
+        /// <param name="stream">The stream to read from.</param>
+        /// <returns>The parsed response.</returns>
         public static HttpResponse GetRequestFromStream(Stream stream)
         {
             var httpResponse = new HttpResponse();
             httpResponse.Parse(stream);
             return httpResponse;
         }
+        /// <summary>Serializes the status line and headers to the stream and flushes it.</summary>
+        /// <param name="stream">The destination stream.</param>
         public void WriteToStream(Stream stream)
         {
             var statusCodeName = new StringBuilder(StatusCode.ToString());
@@ -57,15 +69,16 @@ namespace LHZ.WebSocket.Http
             stringBuilder.Append("\r\n");
             foreach (var item in Headers)
             {
-                stringBuilder.Append(item.Key);
-                stringBuilder.Append(": ");
+                // One line per value rather than a comma-joined list: comma joining is invalid
+                // for headers such as Set-Cookie. A header with no values is skipped, which
+                // also avoids indexing past the end of the buffer.
                 foreach (var value in item.Value)
                 {
+                    stringBuilder.Append(item.Key);
+                    stringBuilder.Append(": ");
                     stringBuilder.Append(value);
-                    stringBuilder.Append(',');
+                    stringBuilder.Append("\r\n");
                 }
-                stringBuilder[stringBuilder.Length - 1] = '\n';
-                stringBuilder.Insert(stringBuilder.Length - 1, '\r');
             }
             stringBuilder.Append("\r\n");
             var bytes = System.Text.Encoding.UTF8.GetBytes(stringBuilder.ToString());
@@ -84,11 +97,14 @@ namespace LHZ.WebSocket.Http
                 throw new InvalidOperationException($"Invalid HTTP request line: {requestLine}");
 
             HttpVersion = parts[0];
-            if(!Enum.TryParse<HttpStatusCode>(parts[1], out HttpStatusCode httpStatusCode))
+            // Parse the numeric code only. Enum.TryParse would also accept status *names* and
+            // would reject any valid code that the BCL enum happens not to define.
+            if (!int.TryParse(parts[1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int statusCode) ||
+                statusCode < 100 || statusCode > 599)
             {
                 throw new InvalidOperationException($"Invalid HTTP Status Code: {parts[1]}");
             }
-            StatusCode = httpStatusCode;
+            StatusCode = (HttpStatusCode)statusCode;
 
             // Read headers until empty line
             string line;

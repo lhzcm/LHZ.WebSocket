@@ -12,7 +12,7 @@
 - **分片消息** — 自动重组 Continuation 帧（客户端 → 服务端）
 - **流式发送** — 通过 `CreateDataFrame(Stream)` 将大负载拆分到多个帧中发送
 - **有界通道** — 出站帧采用生产者-消费者模式，无无界队列
-- **事件驱动** — `OnMessageReceived`、`OnBytesReceived`、`OnCloseRecived`、`OnClientClose`、`OnPingRecived`、`OnPongRecived`
+- **事件驱动** — `OnMessageReceived`、`OnBytesReceived`、`OnCloseReceived`、`OnClientClose`、`OnPingReceived`、`OnPongReceived`
 - **多目标框架** — 支持 `net5.0`、`net6.0`、`net8.0`、`net9.0`、`net10.0`，启用可空引用类型
 - **握手超时** — 可配置超时时间，拒绝慢速 HTTP 升级请求
 - **xUnit 测试** — 全面的单元测试，覆盖帧解析、关闭消息、HTTP 请求头、服务端和客户端
@@ -24,20 +24,35 @@
 #### Package Manager
 
 ``` bash
-Install-Package LHZ.WebSocket -version 1.0.2
+Install-Package LHZ.WebSocket -version 1.2.0
 ```
 
 #### .NET CLI
 
 ``` bash
-dotnet add package LHZ.WebSocket --Version 1.0.2
+dotnet add package LHZ.WebSocket --Version 1.2.0
 ```
 
 #### Package Reference
 
 ``` xml
-<PackageReference Include="LHZ.WebSocket" Version="1.0.2" />
+<PackageReference Include="LHZ.WebSocket" Version="1.2.0" />
 ```
+
+> **从 1.1.x 升级？** 几个拼错的公开名称已经改正，升级后会报编译错误，按下表重命名调用处即可：
+>
+> | 旧名 | 新名 |
+> |-----|-----|
+> | `ClientStatus.Opend` | `ClientStatus.Opened` |
+> | `OnCloseRecived` | `OnCloseReceived` |
+> | `OnPingRecived` | `OnPingReceived` |
+> | `OnPongRecived` | `OnPongReceived` |
+> | `DataFrame.DataDataFrameFlag` | `DataFrame.DataFrameFlag` |
+>
+> 另有两个参数名也已改正，只在用命名实参调用时才受影响：`CreateWebSocketClient` 的
+> `timeOUt` 改为 `timeOut`，`CreateDataFrame` 的 `dataDataFrameLength` 改为 `dataFrameLength`。
+>
+> 另外，收到 Ping 时库会自动回 Pong，原先手动回应的处理器可以删掉了。
 
 ### 2. 创建并启动服务端
 
@@ -68,7 +83,7 @@ server.OnUpgradeRequest += (HttpContext context) =>
         Console.WriteLine($"收到 {data.Length} 字节");
     };
 
-    client.OnCloseRecived += (IWebSocketClient sender, CloseMessage msg) =>
+    client.OnCloseReceived += (IWebSocketClient sender, CloseMessage msg) =>
     {
         Console.WriteLine($"客户端关闭: {msg.CloseCode} — {msg.Message}");
         sender.Close();
@@ -96,7 +111,7 @@ client.OnMessageReceived += (IWebSocketClient sender, string message) =>
     Console.WriteLine($"收到消息: {message}");
 };
 
-client.OnCloseRecived += (IWebSocketClient sender, CloseMessage message) =>
+client.OnCloseReceived += (IWebSocketClient sender, CloseMessage message) =>
 {
     Console.WriteLine($"连接关闭: {message.CloseCode}");
     sender.Close();
@@ -112,9 +127,7 @@ client.SendMessage("Hello World!");
 var server = new WebSocketServer(IPAddress.Loopback, 5000);
 ```
 
-### 5. 运行浏览器示例
-
-打开 `chat-client.html` 在浏览器中体验，或运行单元测试：
+### 5. 运行测试
 
 ```bash
 cd src
@@ -134,40 +147,47 @@ dotnet test
 | `Stop()` | 断开所有客户端并停止监听 |
 | `ClientNums` | 当前已连接客户端数量 |
 | `WebSocketClients` | 已连接客户端快照（`IEnumerable<IWebSocketClient>`） |
+| `Status` | 当前 `ServerStatus`（Ready / Start / Closing / Closed） |
 | `OnUpgradeRequest` | HTTP 升级请求到达时触发；调用 `HttpUpgrade()` 接受升级 |
 | `OnClientConnected` | WebSocket 握手完成后触发（`Action<IWebSocketClient>`） |
+| `OnError` | accept 循环或握手失败时触发（`Action<Exception>`）；未订阅时退回打印到控制台 |
 
 ### `IWebSocketClient`（接口）
 
 | 成员 | 说明 |
 |--------|-------------|
 | `ID` | 此连接的唯一 `Guid` |
-| `Status` | 当前 `ClientStatus`（Connection / Opend / Close） |
-| `SendMessage(string)` | 发送 UTF-8 文本帧 |
-| `SendByte(byte[])` | 发送二进制帧 |
-| `Ping(byte[])` | 发送 Ping 帧 |
-| `Pong(byte[])` | 发送 Pong 帧 |
+| `Status` | 当前 `ClientStatus`（Connection / Opened / Close） |
+| `MaxMessageSize` | 允许重组的最大消息字节数（默认 4 MiB，设为 0 关闭限制）。对端超限时以 1009 关闭 |
+| `SendMessage(string)` | 发送 UTF-8 文本帧。发送队列满时会阻塞调用方 |
+| `SendMessageAsync(string, CancellationToken)` | 异步发送 UTF-8 文本帧，不阻塞 |
+| `SendByte(byte[])` | 发送二进制帧。发送队列满时会阻塞调用方 |
+| `SendByteAsync(byte[], CancellationToken)` | 异步发送二进制帧，不阻塞 |
+| `Ping(byte[])` / `PingAsync(byte[], CancellationToken)` | 发送 Ping 帧 |
+| `Pong(byte[])` / `PongAsync(byte[], CancellationToken)` | 发送 Pong 帧。收到 Ping 时库会自动回 Pong，此方法仅用于主动发送 |
 | `Open()` | 启动后台收发循环 |
 | `Close()` | 取消后台任务并释放 TCP 连接 |
 | `Dispose()` | `Close()` 的别名（实现 `IDisposable`） |
 | `OnMessageReceived` | `EventHandler<IWebSocketClient, string>` — 完整文本消息 |
 | `OnBytesReceived` | `EventHandler<IWebSocketClient, byte[]>` — 完整二进制消息 |
-| `OnCloseRecived` | `EventHandler<IWebSocketClient, CloseMessage>` — 收到关闭帧 |
-| `OnPingRecived` | `EventHandler<IWebSocketClient, byte[]>` — 收到 Ping 帧 |
-| `OnPongRecived` | `EventHandler<IWebSocketClient, byte[]>` — 收到 Pong 帧 |
+| `OnCloseReceived` | `EventHandler<IWebSocketClient, CloseMessage>` — 收到关闭帧 |
+| `OnPingReceived` | `EventHandler<IWebSocketClient, byte[]>` — 收到 Ping 帧 |
+| `OnPongReceived` | `EventHandler<IWebSocketClient, byte[]>` — 收到 Pong 帧 |
 | `OnClientClose` | `Action<IWebSocketClient>` — 连接关闭（本地或远端） |
+| `OnError` | `EventHandler<IWebSocketClient, Exception>` — 后台任务失败；未订阅时退回打印到控制台 |
 
 ### `WebSocketClient`
 
 | 成员 | 说明 |
 |--------|-------------|
-| `CreateWebSocketClient(string url, HttpHeaders? headers)` | **静态方法** — 创建到 WebSocket 服务端的客户端连接 |
+| `CreateWebSocketClient(string url, HttpHeaders? headers)` | **静态方法** — 创建到 WebSocket 服务端的客户端连接。仅支持 `ws://`，`wss://` 会抛 `NotSupportedException` |
 | `HttpContext` | 当前连接的底层 HTTP 上下文 |
 | `Status` | 当前 `ClientStatus` |
-| `SendMessage(string)` | 发送 UTF-8 文本帧 |
-| `SendByte(byte[])` | 发送二进制帧 |
-| `Ping(byte[])` | 发送 Ping 帧 |
-| `Pong(byte[])` | 发送 Pong 帧 |
+| `MaxMessageSize` | 允许重组的最大消息字节数（默认 4 MiB） |
+| `SendMessage(string)` / `SendMessageAsync(string)` | 发送 UTF-8 文本帧 |
+| `SendByte(byte[])` / `SendByteAsync(byte[])` | 发送二进制帧 |
+| `Ping(byte[])` / `PingAsync(byte[])` | 发送 Ping 帧 |
+| `Pong(byte[])` / `PongAsync(byte[])` | 发送 Pong 帧 |
 | `Open()` | 启动后台收发循环 |
 | `Close()` | 取消后台任务并释放 TCP 连接 |
 | `Dispose()` | `Close()` 的别名 |
@@ -251,7 +271,7 @@ public delegate void EventHandler<in TSender, TEventArgs>(TSender sender, TEvent
 
 **`CloseCode`** — 全部 RFC 6455 状态码：`Normal (1000)`、`GoingAway (1001)`、`ProtocolError (1002)`、…、`TlsHandshake (1015)`
 
-**`ClientStatus`** — `Connection`、`Opend`、`Close`
+**`ClientStatus`** — `Connection`、`Opened`、`Close`
 
 **`ServerStatus`** — `Ready`、`Start`、`Closing`、`Closed`
 
@@ -275,7 +295,7 @@ sequenceDiagram
     HttpContext->>WebSocketClient: new WebSocketClient(httpContext)
     WebSocketClient->>WebSocketClient: Open() → StartReceiver() + StartSender()
     对端->>WebSocketClient: 数据帧
-    WebSocketClient->>对端: OnMessageReceived / OnBytesReceived / OnPingRecived / OnPongRecived
+    WebSocketClient->>对端: OnMessageReceived / OnBytesReceived / OnPingReceived / OnPongReceived
     WebSocketClient-->>对端: SendMessage() / SendByte() / Ping() / Pong()
 ```
 
@@ -318,8 +338,6 @@ LHZ.WebSocket/
 │   │   ├── WebSocketClientTests.cs
 │   │   └── Core/ / Http/
 │   └── LHZ.WebSocket.slnx              # 解决方案文件
-├── chat-client.html                     # 浏览器端多人在线聊天示例
-├── test-client.html                     # 浏览器端测试客户端
 ├── LICENSE
 ├── README.md
 └── README.zh-CN.md

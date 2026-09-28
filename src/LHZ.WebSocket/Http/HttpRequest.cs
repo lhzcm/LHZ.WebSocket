@@ -37,6 +37,11 @@ namespace LHZ.WebSocket.Http
         {
             Headers = new HttpHeaders();
         }
+        /// <summary>Creates a request to send.</summary>
+        /// <param name="url">Request target, e.g. /chat.</param>
+        /// <param name="method">HTTP method, e.g. GET.</param>
+        /// <param name="httpVersion">HTTP version string, e.g. HTTP/1.1.</param>
+        /// <param name="headers">Request headers; a new empty collection is used when null.</param>
         public HttpRequest(string url, string method, string httpVersion, System.Net.Http.Headers.HttpHeaders? headers = null)
         {
             Url = url;
@@ -55,6 +60,8 @@ namespace LHZ.WebSocket.Http
             httpRequest.Parse(stream);
             return httpRequest;
         }
+        /// <summary>Serializes the request line and headers to the stream and flushes it.</summary>
+        /// <param name="stream">The destination stream.</param>
         public void WriteToStream(Stream stream)
         {
             StringBuilder stringBuilder = new StringBuilder();
@@ -66,15 +73,16 @@ namespace LHZ.WebSocket.Http
             stringBuilder.Append("\r\n");
             foreach(var item in Headers)
             {
-                stringBuilder.Append(item.Key);
-                stringBuilder.Append(": ");
-                foreach(var value in item.Value)
+                // One line per value rather than a comma-joined list: comma joining is invalid
+                // for headers such as Set-Cookie. A header with no values is skipped, which
+                // also avoids indexing past the end of the buffer.
+                foreach (var value in item.Value)
                 {
+                    stringBuilder.Append(item.Key);
+                    stringBuilder.Append(": ");
                     stringBuilder.Append(value);
-                    stringBuilder.Append(',');
+                    stringBuilder.Append("\r\n");
                 }
-                stringBuilder[stringBuilder.Length - 1] = '\n';
-                stringBuilder.Insert(stringBuilder.Length - 1, '\r');
             }
             stringBuilder.Append("\r\n");
             var bytes = System.Text.Encoding.UTF8.GetBytes(stringBuilder.ToString());

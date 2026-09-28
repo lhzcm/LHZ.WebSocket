@@ -1,6 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <!-- Run the suite against more than the newest framework so the shipped builds are
+         actually exercised. net8.0 is the oldest LTS runtime still generally installed;
+         net5.0 and net9.0 builds of the library are compile-verified only, because their
+         test hosts need runtimes that are usually absent. -->
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>

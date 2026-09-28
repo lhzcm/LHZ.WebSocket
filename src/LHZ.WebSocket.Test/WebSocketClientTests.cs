@@ -13,23 +13,10 @@ public class WebSocketClientTests : IDisposable
 {
     // private WebSocketServer? server;
     // private readonly int port;
-    private HashSet<int> _usedPorts = new HashSet<int>();
     public WebSocketClientTests()
     {
     }
-    private int GetPortRand()
-    {
-       lock (this)
-        {
-            int port = new Random().Next(30000, 49000);
-            while (_usedPorts.Contains(port))
-            {
-                port = new Random().Next(30000, 49000);
-            }
-            _usedPorts.Add(port);
-            return port;
-        }
-    }
+    private int GetPortRand() => TestPorts.GetFreePort();
 
     public void Dispose()
     {
@@ -38,7 +25,7 @@ public class WebSocketClientTests : IDisposable
     #region Client Status Lifecycle (via Server)
 
     [Fact]
-    public async Task Status_ShouldBeOpend_AfterUpgrade()
+    public async Task Status_ShouldBeOpened_AfterUpgrade()
     {
         IWebSocketClient? connectedClient = null;
         int port = GetPortRand();
@@ -64,7 +51,7 @@ public class WebSocketClientTests : IDisposable
         stream.Flush();
         Task.Delay(100).GetAwaiter().GetResult();
         Assert.NotNull(connectedClient);
-        Assert.Equal(LHZ.WebSocket.Enums.ClientStatus.Opend, connectedClient!.Status);
+        Assert.Equal(LHZ.WebSocket.Enums.ClientStatus.Opened, connectedClient!.Status);
 
         tcp.Close();
         server.Stop();

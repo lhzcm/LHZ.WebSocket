@@ -14,9 +14,10 @@ namespace LHZ.WebSocket.Interfaces
                 /// <summary>The parsed HTTP upgrade request.</summary>
                 public HttpRequest Request { get; }
                 /// <summary>
-                /// Http Response Info
+                /// Http Response Info. Null on a client-role context until the server's
+                /// handshake response has been read.
                 /// </summary>
-                public HttpResponse Response { get; }
+                public HttpResponse? Response { get; }
                 /// <summary>
                 /// Completes the WebSocket handshake: computes the accept key,
                 /// sends HTTP 101 Switching Protocols, and creates a <see cref="WebSocketClient"/>.

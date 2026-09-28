@@ -15,6 +15,8 @@ namespace LHZ.WebSocket.Core
     {
         private readonly Stream _stream;
 
+        /// <summary>Creates a reader over the given stream.</summary>
+        /// <param name="stream">The stream to read frames from.</param>
         public DataFrameReader(Stream stream)
         {
             _stream = stream;
@@ -34,13 +36,20 @@ namespace LHZ.WebSocket.Core
             }
         }
 
-        /// <summary>Yields data frames asynchronously until cancellation is requested.</summary>
+        /// <summary>
+        /// Yields data frames asynchronously until a close frame is encountered
+        /// or cancellation is requested.
+        /// </summary>
         public async IAsyncEnumerable<DataFrame> ReadAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             while (!cancellationToken.IsCancellationRequested)
             {
                 var frame = await ReadFrameAsync(cancellationToken);
                 yield return frame;
+                if (frame.Opcode == Enums.OpCode.Close)
+                {
+                    yield break;
+                }
             }
         }
 
@@ -53,7 +62,7 @@ namespace LHZ.WebSocket.Core
             var header = StreamReadExact(2);
             int payloadLength = (byte)(header[1] & 0x7F);
             bool masked = (header[1] & 0x80) == 0x80;
-            byte[]? maskingKey = null;
+            UInt32 maskingKey = 0;
 
             // Extended payload length: 2 bytes for 126, 8 bytes for 127
             if (payloadLength == 126)
@@ -73,9 +82,10 @@ namespace LHZ.WebSocket.Core
 
             if (masked)
             {
-                maskingKey = StreamReadExact(4);
+                var maskingKeyArray = StreamReadExact(4).AsSpan();
+                maskingKey = DataFrame.MaskingKeyToUint32(ref maskingKeyArray);
             }
-            return DataFrame.CreateDataFrame(header[0], maskingKey, StreamReadExact(payloadLength));
+            return DataFrame.CreateDataFrame(header[0], StreamReadExact(payloadLength), maskingKey, masked);
         }
 
         /// <summary>
@@ -86,7 +96,7 @@ namespace LHZ.WebSocket.Core
             var header = await StreamReadExactAsync(2, cancellationToken);
             int payloadLength = (byte)(header[1] & 0x7F);
             bool masked = (header[1] & 0x80) == 0x80;
-            byte[]? maskingKey = null;
+            UInt32 maskingKey = 0;
 
             if (payloadLength == 126)
             {
@@ -105,9 +115,10 @@ namespace LHZ.WebSocket.Core
 
             if (masked)
             {
-                maskingKey = await StreamReadExactAsync(4, cancellationToken);
+                var maskingKeyArray = (await StreamReadExactAsync(4, cancellationToken)).AsSpan();
+                maskingKey = DataFrame.MaskingKeyToUint32(ref maskingKeyArray);
             }
-            return DataFrame.CreateDataFrame(header[0], maskingKey, await StreamReadExactAsync(payloadLength, cancellationToken));
+            return DataFrame.CreateDataFrame(header[0], await StreamReadExactAsync(payloadLength, cancellationToken), maskingKey, masked);
         }
 
         /// <summary>Reads exactly <paramref name="count"/> bytes from the stream (sync).</summary>
@@ -130,8 +141,11 @@ namespace LHZ.WebSocket.Core
         {
             byte[] buffer = new byte[count];
             int bytesReadTotal = 0;
-            while (bytesReadTotal < count && !cancellationToken.IsCancellationRequested)
+            while (bytesReadTotal < count)
             {
+                // Throw rather than return a partially filled buffer: a short read would be
+                // parsed as a valid frame by the caller.
+                cancellationToken.ThrowIfCancellationRequested();
                 int bytesRead = await _stream.ReadAsync(buffer, bytesReadTotal, count - bytesReadTotal, cancellationToken);
                 if (bytesRead == 0)
                     throw new EndOfStreamException("Stream closed while reading data frame.");
