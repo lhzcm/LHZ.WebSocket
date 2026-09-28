@@ -1,53 +1,58 @@
 namespace LHZ.WebSocket.Enums
 {
+    /// <summary>
+    /// WebSocket close status codes (RFC 6455 Section 7.4).
+    /// Codes 3000-3999 are registered with IANA and 4000-4999 are for private use;
+    /// both ranges are accepted on the wire but have no named member here.
+    /// </summary>
     public enum CloseCode
     {
-        /// <summary>正常关闭 (Normal Closure)</summary>
+        /// <summary>Normal Closure 正常关闭</summary>
         Normal = 1000,
 
-        /// <summary>端点离开 (Going Away)，如浏览器关闭页面</summary>
+        /// <summary>Going Away 端点离开，如浏览器关闭页面</summary>
         GoingAway = 1001,
 
-        /// <summary>协议错误 (Protocol Error)</summary>
+        /// <summary>Protocol Error 协议错误</summary>
         ProtocolError = 1002,
 
-        /// <summary>不支持的数据类型 (Unsupported Data)</summary>
+        /// <summary>Unsupported Data 不支持的数据类型</summary>
         UnsupportedData = 1003,
 
-        /// <summary>保留 (Reserved)，不应在 Close 帧中发送</summary>
+        /// <summary>Reserved 保留，不得出现在线路上</summary>
         Reserved = 1004,
 
-        /// <summary>未收到状态码 (No Status Received)，保留，不应发送</summary>
+        /// <summary>No Status Received 未收到状态码，保留，不得发送</summary>
         NoStatusReceived = 1005,
 
-        /// <summary>异常关闭 (Abnormal Closure)，保留，不应发送</summary>
+        /// <summary>Abnormal Closure 异常关闭，保留，不得发送</summary>
         AbnormalClosure = 1006,
 
-        /// <summary>无效的帧负载数据 (Invalid Frame Payload Data)</summary>
+        /// <summary>Invalid Frame Payload Data 无效的帧负载数据，例如文本帧不是合法 UTF-8</summary>
         InvalidFramePayloadData = 1007,
 
-        /// <summary>策略违规 (Policy Violation)</summary>
+        /// <summary>Policy Violation 策略违规</summary>
         PolicyViolation = 1008,
 
-        /// <summary>消息过大 (Message Too Big)</summary>
+        /// <summary>Message Too Big 消息过大</summary>
         MessageTooBig = 1009,
 
-        /// <summary>缺少必需的扩展 (Mandatory Extension)</summary>
+        /// <summary>Mandatory Extension 缺少必需的扩展</summary>
         MandatoryExtension = 1010,
 
-        /// <summary>服务器内部错误 (Internal Server Error)</summary>
+        /// <summary>Internal Server Error 服务器内部错误</summary>
         InternalServerError = 1011,
 
-        /// <summary>服务重启 (Service Restart)</summary>
+        /// <summary>Service Restart 服务重启</summary>
         ServiceRestart = 1012,
 
-        /// <summary>稍后重试 (Try Again Later)</summary>
+        /// <summary>Try Again Later 稍后重试</summary>
         TryAgainLater = 1013,
 
-        /// <summary>错误的网关 (Bad Gateway)</summary>
+        /// <summary>Bad Gateway 错误的网关</summary>
         BadGateway = 1014,
 
-        /// <summary>TLS 握手失败 (TLS Handshake)，保留，不应发送</summary>
+        /// <summary>TLS Handshake 失败，保留，不得发送</summary>
         TlsHandshake = 1015,
     }
 }

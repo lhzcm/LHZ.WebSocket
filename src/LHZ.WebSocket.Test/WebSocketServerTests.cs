@@ -13,26 +13,13 @@ namespace LHZ.WebSocket.Test;
 /// </summary>
 public class WebSocketServerTests : IDisposable
 {
-    private HashSet<int> _usedPorts = new HashSet<int>();
     public WebSocketServerTests()
     {
     }
     public void Dispose()
     {
     }
-    private int GetPortRand()
-    {
-        lock (this)
-        {
-            int port = new Random().Next(30000, 49000);
-            while (_usedPorts.Contains(port))
-            {
-                port = new Random().Next(50000, 60000);
-            }
-            _usedPorts.Add(port);
-            return port;
-        }
-    }
+    private int GetPortRand() => TestPorts.GetFreePort();
 
     #region Server Lifecycle
 
@@ -259,7 +246,7 @@ public class WebSocketServerTests : IDisposable
         Assert.True(clientConnected.Wait(TimeSpan.FromSeconds(1)),
             "OnUpgradeRequest should be triggered");
 
-        // 等待客户端状态变为 Opend
+        // 等待客户端状态变为 Opened
         Thread.Sleep(500);
         Assert.True(server.ClientNums >= 1, $"Should have at least 1 client, got {server.ClientNums}");
 

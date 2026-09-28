@@ -7,6 +7,9 @@ namespace LHZ.WebSocket.Core
     /// </summary>
     public struct CloseMessage
     {
+        /// <summary>Creates a close message.</summary>
+        /// <param name="opCode">The close status code.</param>
+        /// <param name="message">The human-readable close reason; may be empty.</param>
         public CloseMessage(CloseCode opCode, string message)
         {
             CloseCode = opCode;

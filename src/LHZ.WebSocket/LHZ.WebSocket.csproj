@@ -1,15 +1,40 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFrameworks>NET5;NET6;NET8;NET9;NET10.0</TargetFrameworks>
+    <TargetFrameworks>net5.0;net6.0;net8.0;net9.0;net10.0</TargetFrameworks>
     <LangVersion>13.0</LangVersion>
     <Nullable>enable</Nullable>
-    <Version>1.1.1</Version>
+    <Version>1.2.0</Version>
     <Authors>LHZ</Authors>
     <Description>A lightweight, zero-dependency WebSocket library for .NET, implementing RFC 6455 from the ground up using raw TcpListener/TcpClient. Supports both server-side and client-side WebSocket connections.</Description>
     <PackageIcon>logo.png</PackageIcon>
     <RepositoryType>Git</RepositoryType>
     <RepositoryUrl>https://github.com/lhzcm/LHZ.WebSocket</RepositoryUrl>
-    <PackageReleaseNotes>1.1.1:
+    <PackageReleaseNotes>1.2.0:
+- BREAKING: long-standing misspellings in the public API were corrected. Rename call sites as follows: ClientStatus.Opend -&gt; ClientStatus.Opened, OnCloseRecived -&gt; OnCloseReceived, OnPingRecived -&gt; OnPingReceived, OnPongRecived -&gt; OnPongReceived, DataFrame.DataDataFrameFlag -&gt; DataFrame.DataFrameFlag. The old names are gone rather than deprecated, so this is a compile error you fix once, not a silent behaviour change
+- BREAKING (named arguments only): two parameters were renamed - CreateWebSocketClient's timeOUt -&gt; timeOut, and CreateDataFrame's dataDataFrameLength -&gt; dataFrameLength. Positional callers are unaffected
+- BREAKING: IWebSocketClient gained members (the async send methods, MaxMessageSize and OnError), so any third-party implementation of the interface must be updated
+- Fix: frames larger than 65535 bytes wrote an uninitialized 64-bit length field, because the send path rents an uncleared buffer from ArrayPool. The peer read a bogus length and the connection desynchronized
+- Fix: ApplyMask masked too few bytes for payload segments with a non-zero offset
+- Fix: the sender could return the same pooled buffer twice, corrupting ArrayPool for the whole process
+- Fix: an all-zero masking key was treated as "not masked", dropping the MASK bit
+- Fix: OnClientConnected was declared and documented but never raised
+- Fix: Close() was check-then-act, so concurrent callers could double-dispose the socket and raise OnClientClose more than once
+- Fix: close codes 3000-4999 are accepted per RFC 6455 §7.4 instead of being treated as errors; reserved codes (1004, 1005, 1006, 1015) are now rejected and never echoed back
+- Fix: the handshake timeout could dispose the stream while the 101 response was being written, and its timer outlived every connection
+- Fix: the server could stay stuck in the Closing state, making Start() refuse to run again
+- Fix: header serialization no longer comma-joins multiple values and no longer throws on a header with no values
+- Fix: HTTP response status codes are parsed numerically, so unusual codes no longer throw
+- Fix: CreateWebSocketClient no longer mutates the caller's header collection, disposes the socket when the handshake fails, and rejects wss:// explicitly instead of connecting in plaintext
+- Fix: the client handshake key is drawn from a cryptographic RNG instead of Guid.NewGuid
+- Add: protocol validation the implementation previously lacked - reserved bits must be zero, incoming frames must match the peer's masking role, control frames are capped at 125 bytes, text payloads must be valid UTF-8 (1007)
+- Add: MaxMessageSize (default 4 MiB) caps reassembled messages, closing the unbounded-memory path a peer could open by never setting FIN
+- Add: automatic Pong reply to Ping, as required by RFC 6455 §5.5.2
+- Add: SendMessageAsync, SendByteAsync, PingAsync and PongAsync, so sending no longer has to block when the outgoing queue is full
+- Add: OnError on both client and server, and WebSocketProtocolException, replacing Console.WriteLine as the only way to observe failures
+- Add: WebSocketServer.Status
+- Change: a protocol violation now sends a Close frame stating the reason before the connection is failed
+
+1.1.1:
 - Fix: handshake handling is now concurrent, a slow client no longer blocks the accept loop
 - Fix: client-role connections now mask every outgoing frame (RFC 6455 §5.1), with a cryptographic masking key
 - Fix: the client collection is now per server instance instead of static
@@ -44,4 +69,3 @@
     </None>
   </ItemGroup>
 </Project>
-<!--NET40;NET45;NET46;NETSTANDARD2.0;NET5;NET6-->

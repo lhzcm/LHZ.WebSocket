@@ -7,6 +7,7 @@ namespace LHZ.WebSocket.Http
     /// </summary>
     public class HttpHeaders : System.Net.Http.Headers.HttpHeaders
     {
+        /// <summary>Creates an empty header collection.</summary>
         public HttpHeaders()
         {
         }

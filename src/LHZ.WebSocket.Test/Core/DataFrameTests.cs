@@ -328,21 +328,21 @@ public class DataFrameTests
     #region Properties
 
     [Fact]
-    public void DataDataFrameFlag_ShouldReflectFinAndOpcode()
+    public void DataFrameFlag_ShouldReflectFinAndOpcode()
     {
         var frame = DataFrame.CreateDataFrame(OpCode.Close, true, new byte[] { 0x03, 0xE8 });
 
         // FIN=1(0x80) + Close=0x8 => 0x88
-        Assert.Equal(0x88, frame.DataDataFrameFlag);
+        Assert.Equal(0x88, frame.DataFrameFlag);
     }
 
     [Fact]
-    public void DataDataFrameFlag_NonFin_ShouldNotHaveFinBit()
+    public void DataFrameFlag_NonFin_ShouldNotHaveFinBit()
     {
         var frame = DataFrame.CreateDataFrame(OpCode.Text, false, new byte[] { 0x41 });
 
         // FIN=0 + Text=0x1 => 0x01
-        Assert.Equal(0x01, frame.DataDataFrameFlag);
+        Assert.Equal(0x01, frame.DataFrameFlag);
     }
     public static bool ByteArrayValueEqual(ArraySegment<byte> source, ArraySegment<byte> target)
     {

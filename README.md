@@ -12,7 +12,7 @@ A lightweight, zero-dependency WebSocket library for .NET, implementing RFC 6455
 - **Fragmented messages** — automatic reassembly of continuation frames (client → server)
 - **Streaming send** — split large payloads across multiple frames via `CreateDataFrame(Stream)`
 - **Bounded channel** — producer-consumer pattern for outgoing frames; no unbounded queues
-- **Event-driven** — `OnMessageReceived`, `OnBytesReceived`, `OnCloseRecived`, `OnClientClose`, `OnPingRecived`, `OnPongRecived`
+- **Event-driven** — `OnMessageReceived`, `OnBytesReceived`, `OnCloseReceived`, `OnClientClose`, `OnPingReceived`, `OnPongReceived`
 - **Multi-targeting** — `net5.0`, `net6.0`, `net8.0`, `net9.0`, `net10.0` with nullable reference types enabled
 - **Handshake timeout** — configurable timeout to reject slow HTTP upgrade requests
 - **xUnit tested** — comprehensive unit tests for frame parsing, close messages, HTTP headers, server, and client
@@ -24,20 +24,38 @@ A lightweight, zero-dependency WebSocket library for .NET, implementing RFC 6455
 #### Package Manager
 
 ``` bash
-Install-Package LHZ.WebSocket -version 1.0.2
+Install-Package LHZ.WebSocket -version 1.2.0
 ```
 
 #### .NET CLI
 
 ``` bash
-dotnet add package LHZ.WebSocket --Version 1.0.2
+dotnet add package LHZ.WebSocket --Version 1.2.0
 ```
 
 #### Package Reference
 
 ``` xml
-<PackageReference Include="LHZ.WebSocket" Version="1.0.2" />
+<PackageReference Include="LHZ.WebSocket" Version="1.2.0" />
 ```
+
+> **Upgrading from 1.1.x?** Some misspelled public names were corrected, so you will get
+> compile errors until you rename the call sites:
+>
+> | Old | New |
+> |-----|-----|
+> | `ClientStatus.Opend` | `ClientStatus.Opened` |
+> | `OnCloseRecived` | `OnCloseReceived` |
+> | `OnPingRecived` | `OnPingReceived` |
+> | `OnPongRecived` | `OnPongReceived` |
+> | `DataFrame.DataDataFrameFlag` | `DataFrame.DataFrameFlag` |
+>
+> Two parameter names were corrected as well, which only matters if you pass them by name:
+> `CreateWebSocketClient`'s `timeOUt` is now `timeOut`, and `CreateDataFrame`'s
+> `dataDataFrameLength` is now `dataFrameLength`.
+>
+> Also note that a Pong is now sent automatically on every incoming Ping, so a handler that
+> replied by hand can be removed.
 
 ### 2. Create and start a server
 
@@ -68,7 +86,7 @@ server.OnUpgradeRequest += (HttpContext context) =>
         Console.WriteLine($"Received {data.Length} bytes");
     };
 
-    client.OnCloseRecived += (IWebSocketClient sender, CloseMessage msg) =>
+    client.OnCloseReceived += (IWebSocketClient sender, CloseMessage msg) =>
     {
         Console.WriteLine($"Client closed: {msg.CloseCode} — {msg.Message}");
         sender.Close();
@@ -96,7 +114,7 @@ client.OnMessageReceived += (IWebSocketClient sender, string message) =>
     Console.WriteLine($"Received: {message}");
 };
 
-client.OnCloseRecived += (IWebSocketClient sender, CloseMessage message) =>
+client.OnCloseReceived += (IWebSocketClient sender, CloseMessage message) =>
 {
     Console.WriteLine($"Connection closed: {message.CloseCode}");
     sender.Close();
@@ -112,9 +130,7 @@ client.SendMessage("Hello World!");
 var server = new WebSocketServer(IPAddress.Loopback, 5000);
 ```
 
-### 5. Try the browser demo
-
-Open `chat-client.html` in a browser, or run the unit tests:
+### 5. Run the tests
 
 ```bash
 cd src
@@ -134,40 +150,47 @@ dotnet test
 | `Stop()` | Disconnect all clients and stop listening |
 | `ClientNums` | Current number of connected clients |
 | `WebSocketClients` | Snapshot of connected clients (`IEnumerable<IWebSocketClient>`) |
+| `Status` | Current `ServerStatus` (Ready / Start / Closing / Closed) |
 | `OnUpgradeRequest` | Fired when an HTTP upgrade is received; call `HttpUpgrade()` to accept |
 | `OnClientConnected` | Fired after the WebSocket handshake completes (`Action<IWebSocketClient>`) |
+| `OnError` | Fired when the accept loop or a handshake fails (`Action<Exception>`); falls back to the console when unsubscribed |
 
 ### `IWebSocketClient` (interface)
 
 | Member | Description |
 |--------|-------------|
 | `ID` | Unique `Guid` for this connection |
-| `Status` | Current `ClientStatus` (Connection / Opend / Close) |
-| `SendMessage(string)` | Send a UTF-8 text frame |
-| `SendByte(byte[])` | Send a binary frame |
-| `Ping(byte[])` | Send a Ping frame |
-| `Pong(byte[])` | Send a Pong frame |
+| `Status` | Current `ClientStatus` (Connection / Opened / Close) |
+| `MaxMessageSize` | Largest reassembled incoming message in bytes (default 4 MiB; 0 disables the limit). A peer exceeding it is closed with 1009 |
+| `SendMessage(string)` | Send a UTF-8 text frame. Blocks while the outgoing queue is full |
+| `SendMessageAsync(string, CancellationToken)` | Send a UTF-8 text frame without blocking |
+| `SendByte(byte[])` | Send a binary frame. Blocks while the outgoing queue is full |
+| `SendByteAsync(byte[], CancellationToken)` | Send a binary frame without blocking |
+| `Ping(byte[])` / `PingAsync(byte[], CancellationToken)` | Send a Ping frame |
+| `Pong(byte[])` / `PongAsync(byte[], CancellationToken)` | Send a Pong frame. A Pong is sent automatically on every incoming Ping, so this is only needed for unsolicited Pongs |
 | `Open()` | Start the background send/receive loops |
 | `Close()` | Cancel tasks and dispose the TCP connection |
 | `Dispose()` | Alias for `Close()` (implements `IDisposable`) |
 | `OnMessageReceived` | `EventHandler<IWebSocketClient, string>` — complete text message |
 | `OnBytesReceived` | `EventHandler<IWebSocketClient, byte[]>` — complete binary message |
-| `OnCloseRecived` | `EventHandler<IWebSocketClient, CloseMessage>` — close frame received |
-| `OnPingRecived` | `EventHandler<IWebSocketClient, byte[]>` — Ping frame received |
-| `OnPongRecived` | `EventHandler<IWebSocketClient, byte[]>` — Pong frame received |
+| `OnCloseReceived` | `EventHandler<IWebSocketClient, CloseMessage>` — close frame received |
+| `OnPingReceived` | `EventHandler<IWebSocketClient, byte[]>` — Ping frame received |
+| `OnPongReceived` | `EventHandler<IWebSocketClient, byte[]>` — Pong frame received |
 | `OnClientClose` | `Action<IWebSocketClient>` — connection closed (local or remote) |
+| `OnError` | `EventHandler<IWebSocketClient, Exception>` — a background task failed; falls back to the console when unsubscribed |
 
 ### `WebSocketClient`
 
 | Member | Description |
 |--------|-------------|
-| `CreateWebSocketClient(string url, HttpHeaders? headers)` | **Static** — creates a client connection to a WebSocket server |
+| `CreateWebSocketClient(string url, HttpHeaders? headers)` | **Static** — creates a client connection to a WebSocket server. `ws://` only; `wss://` throws `NotSupportedException` |
 | `HttpContext` | The underlying HTTP context for this connection |
 | `Status` | Current `ClientStatus` |
-| `SendMessage(string)` | Send a UTF-8 text frame |
-| `SendByte(byte[])` | Send a binary frame |
-| `Ping(byte[])` | Send a Ping frame |
-| `Pong(byte[])` | Send a Pong frame |
+| `MaxMessageSize` | Largest reassembled incoming message in bytes (default 4 MiB) |
+| `SendMessage(string)` / `SendMessageAsync(string)` | Send a UTF-8 text frame |
+| `SendByte(byte[])` / `SendByteAsync(byte[])` | Send a binary frame |
+| `Ping(byte[])` / `PingAsync(byte[])` | Send a Ping frame |
+| `Pong(byte[])` / `PongAsync(byte[])` | Send a Pong frame |
 | `Open()` | Start background send/receive loops |
 | `Close()` | Cancel tasks and dispose the TCP connection |
 | `Dispose()` | Alias for `Close()` |
@@ -251,7 +274,7 @@ public delegate void EventHandler<in TSender, TEventArgs>(TSender sender, TEvent
 
 **`CloseCode`** — All RFC 6455 codes: `Normal (1000)`, `GoingAway (1001)`, `ProtocolError (1002)`, …, `TlsHandshake (1015)`
 
-**`ClientStatus`** — `Connection`, `Opend`, `Close`
+**`ClientStatus`** — `Connection`, `Opened`, `Close`
 
 **`ServerStatus`** — `Ready`, `Start`, `Closing`, `Closed`
 
@@ -275,7 +298,7 @@ sequenceDiagram
     HttpContext->>WebSocketClient: new WebSocketClient(httpContext)
     WebSocketClient->>WebSocketClient: Open() → StartReceiver() + StartSender()
     Peer->>WebSocketClient: Data frames
-    WebSocketClient->>Peer: OnMessageReceived / OnBytesReceived / OnPingRecived / OnPongRecived
+    WebSocketClient->>Peer: OnMessageReceived / OnBytesReceived / OnPingReceived / OnPongReceived
     WebSocketClient-->>Peer: SendMessage() / SendByte() / Ping() / Pong()
 ```
 
@@ -318,8 +341,6 @@ LHZ.WebSocket/
 │   │   ├── WebSocketClientTests.cs
 │   │   └── Core/ / Http/
 │   └── LHZ.WebSocket.slnx              # Solution file
-├── chat-client.html                     # Browser-based multi-user chat demo
-├── test-client.html                     # Browser-based test client
 ├── LICENSE
 ├── README.md
 └── README.zh-CN.md

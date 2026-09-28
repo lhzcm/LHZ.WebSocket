@@ -21,18 +21,20 @@ namespace LHZ.WebSocket.Http
     public sealed class HttpContext : HttpContextBase, IHttpContext, IDisposable
     {
         private TcpClient _tcpClient;
+        /// <summary>The TCP connection this context was built from.</summary>
         public TcpClient TcpClient => _tcpClient;
-        private HttpContext(TcpClient tcpClient, HttpRequest request, HttpResponse? response) : base(tcpClient.GetStream(), request, response)
+        private HttpContext(TcpClient tcpClient, HttpRequest? request, HttpResponse? response) : base(tcpClient.GetStream(), request, response)
         {
             _tcpClient = tcpClient;
         }
-        /// <summary>Parses the HTTP request from the TCP stream and returns a new context.</summary>
+        /// <summary>Wraps an outgoing request (client role) and returns a new context.</summary>
         internal static HttpContext GetHttpContext(TcpClient tcpClient, HttpRequest request, int timeOut)
         {
             var context = new HttpContext(tcpClient, request, null);
             context.Init(timeOut);
             return context;
         }
+        /// <summary>Parses the HTTP request from the TCP stream (server role) and returns a new context.</summary>
         internal static HttpContext GetHttpContext(TcpClient tcpClient, int timeOut)
         {
             var context = new HttpContext(tcpClient, null, new HttpResponse(HttpStatusCode.SwitchingProtocols, "HTTP/1.1"));
