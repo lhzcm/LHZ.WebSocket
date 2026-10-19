@@ -4,3 +4,4 @@ obj/
 test-client.html
 chat-client.html
 LHZ.WebSocket.ChatServer/
+.perf/

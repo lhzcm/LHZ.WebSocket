@@ -1,5 +1,4 @@
 using System;
-using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -267,7 +266,19 @@ namespace LHZ.WebSocket
         protected void Send(OpCode opCode, byte[] bytes)
         {
             var dataFrame = DataFrame.CreateDataFrame(opCode, true, bytes, NextMaskingKey());
-            _channel.Writer.WriteAsync(dataFrame).GetAwaiter().GetResult();
+            try
+            {
+                // ChannelWriter.WriteAsync returns a ValueTask that is incomplete while the
+                // channel is full. Blocking on it with GetAwaiter().GetResult() directly throws
+                // "The asynchronous operation has not completed"; materialize a Task first.
+                _channel.Writer.WriteAsync(dataFrame).AsTask().GetAwaiter().GetResult();
+            }
+            catch
+            {
+                // The frame never entered the channel, so its pooled buffer is still ours.
+                dataFrame.Dispose();
+                throw;
+            }
         }
 
         /// <summary>Enqueues a data frame onto the outgoing channel without blocking.</summary>
@@ -418,11 +429,12 @@ namespace LHZ.WebSocket
                                 throw new WebSocketProtocolException(CloseCode.ProtocolError, "Control frame must not be fragmented");
                             }
                             // A control frame payload is capped at 125 bytes (RFC 6455 §5.5).
-                            if (item.Data.Count > 125)
+                            if (item.Data.Length > 125)
                             {
                                 throw new WebSocketProtocolException(CloseCode.ProtocolError, "Control frame payload must not exceed 125 bytes");
                             }
                             ReceiveProcessing(item.Opcode, item.RSV1, item.RSV2, item.RSV3, ToArray(item.Data));
+                            item.Dispose();
                             continue;
                         }
 
@@ -433,12 +445,17 @@ namespace LHZ.WebSocket
                             {
                                 throw new WebSocketProtocolException(CloseCode.ProtocolError, "Continuation frame received without a started message");
                             }
-                            fragmentedLength += item.Data.Count;
+                            fragmentedLength += item.Data.Length;
                             EnforceMaxMessageSize(fragmentedLength);
                             dataFrames.Add(item);
                             if (item.FIN)
                             {
                                 ReceiveFragmentedMessage(dataFrames);
+                                // The reassembled message is a copy; the fragments can go back to the pool.
+                                foreach (var frame in dataFrames)
+                                {
+                                    frame.Dispose();
+                                }
                                 dataFrames.Clear();
                                 fragmentedLength = 0;
                             }
@@ -452,16 +469,17 @@ namespace LHZ.WebSocket
                             throw new WebSocketProtocolException(CloseCode.ProtocolError, "New data frame received while a fragmented message is in progress");
                         }
 
-                        EnforceMaxMessageSize(item.Data.Count);
+                        EnforceMaxMessageSize(item.Data.Length);
 
                         // Data frame: single-frame message or the start of a fragmented one.
                         if (item.FIN)
                         {
                             ReceiveProcessing(item.Opcode, item.RSV1, item.RSV2, item.RSV3, ToArray(item.Data));
+                            item.Dispose();
                         }
                         else
                         {
-                            fragmentedLength = item.Data.Count;
+                            fragmentedLength = item.Data.Length;
                             dataFrames.Add(item);
                         }
                     }
@@ -539,15 +557,9 @@ namespace LHZ.WebSocket
         }
 
         /// <summary>Copies a payload segment into a standalone array.</summary>
-        private static byte[] ToArray(ArraySegment<byte> segment)
+        private static byte[] ToArray(ReadOnlySpan<byte> data)
         {
-            if (segment.Array == null || segment.Count == 0)
-            {
-                return Array.Empty<byte>();
-            }
-            var bytes = new byte[segment.Count];
-            Buffer.BlockCopy(segment.Array, segment.Offset, bytes, 0, segment.Count);
-            return bytes;
+            return data.Length == 0 ? Array.Empty<byte>() : data.ToArray();
         }
 
         /// <summary>
@@ -582,17 +594,14 @@ namespace LHZ.WebSocket
         /// </summary>
         private void ReceiveFragmentedMessage(List<DataFrame> dataFrames)
         {
-            int count = dataFrames.Sum(n => n.Data.Count);
+            int count = dataFrames.Sum(n => n.Data.Length);
             var bytes = new byte[count];
             int offset = 0;
             foreach (var dataFrame in dataFrames)
             {
-                var segment = dataFrame.Data;
-                if (segment.Array != null && segment.Count > 0)
-                {
-                    Buffer.BlockCopy(segment.Array, segment.Offset, bytes, offset, segment.Count);
-                }
-                offset += segment.Count;
+                var data = dataFrame.Data;
+                data.CopyTo(bytes.AsSpan(offset));
+                offset += data.Length;
             }
             ReceiveProcessing(dataFrames[0].Opcode, dataFrames[0].RSV1, dataFrames[0].RSV2, dataFrames[0].RSV3, bytes);
         }
@@ -724,21 +733,17 @@ namespace LHZ.WebSocket
                     while (!_cts.Token.IsCancellationRequested)
                     {
                         var dataFrame = await _channel.Reader.ReadAsync(_cts.Token);
-                        int dataFrameHeaderLength = dataFrame.DataFrameHeaderLength;
-                        // use ArayPool reduce GC Collect. The rented array is returned exactly
-                        // once, in a finally, and the local is scoped to this iteration so a
-                        // later failure can never return the same buffer twice.
-                        byte[] dataFrameHeaderBytes = ArrayPool<byte>.Shared.Rent(dataFrameHeaderLength);
                         try
                         {
-                            dataFrame.DataFrameHeaderFull(ref dataFrameHeaderBytes);
-                            await _networkStream.WriteAsync(dataFrameHeaderBytes, 0, dataFrameHeaderLength, _cts.Token);
-                            await _networkStream.WriteAsync(dataFrame.Data, _cts.Token);
+                            // The frame already owns a contiguous header + payload buffer, so it
+                            // can be written with a single call instead of renting a header array.
+                            await _networkStream.WriteAsync(dataFrame.Buffer, _cts.Token);
                             await _networkStream.FlushAsync(_cts.Token);
                         }
                         finally
                         {
-                            ArrayPool<byte>.Shared.Return(dataFrameHeaderBytes);
+                            // The frame's buffer is pooled; return it once the bytes are on the wire.
+                            dataFrame.Dispose();
                         }
                     }
                 }

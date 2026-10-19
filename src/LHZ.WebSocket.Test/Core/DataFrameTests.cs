@@ -239,17 +239,17 @@ public class DataFrameTests
         // 第一帧：非 FIN，Text
         Assert.False(frames[0].FIN);
         Assert.Equal(OpCode.Text, frames[0].Opcode);
-        Assert.Equal(100, frames[0].Data.Count);
+        Assert.Equal(100, frames[0].Data.Length);
 
         // 第二帧：非 FIN，Continuation
         Assert.False(frames[1].FIN);
         Assert.Equal(OpCode.Continuation, frames[1].Opcode);
-        Assert.Equal(100, frames[1].Data.Count);
+        Assert.Equal(100, frames[1].Data.Length);
 
         // 第三帧：FIN，Continuation
         Assert.True(frames[2].FIN);
         Assert.Equal(OpCode.Continuation, frames[2].Opcode);
-        Assert.Equal(50, frames[2].Data.Count);
+        Assert.Equal(50, frames[2].Data.Length);
 
         // 拼接后数据一致
         var combined = frames.SelectMany(f => f.Data.ToArray()).ToArray();
@@ -269,10 +269,10 @@ public class DataFrameTests
         Assert.Equal(3, frames.Count);
 
         Assert.False(frames[0].FIN);
-        Assert.Equal(100, frames[0].Data.Count);
+        Assert.Equal(100, frames[0].Data.Length);
 
         Assert.False(frames[1].FIN);
-        Assert.Equal(100, frames[1].Data.Count);
+        Assert.Equal(100, frames[1].Data.Length);
 
         Assert.True(frames[2].FIN);
         Assert.Empty(frames[2].Data.ToArray());

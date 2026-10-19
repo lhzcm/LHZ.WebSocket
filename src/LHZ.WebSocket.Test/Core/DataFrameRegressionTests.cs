@@ -30,7 +30,7 @@ public class DataFrameRegressionTests
         {
             dirty[i] = 0xFF;
         }
-        frame.DataFrameHeaderFull(ref dirty);
+        frame.DataFrameHeader.CopyTo(dirty);
 
         Assert.Equal(127, dirty[1] & 0x7F);
         // 负载长度是 int，64 位长度字段的高 4 字节必须被显式写成 0
@@ -61,7 +61,7 @@ public class DataFrameRegressionTests
         var rented = ArrayPool<byte>.Shared.Rent(headerLength);
         try
         {
-            frame.DataFrameHeaderFull(ref rented);
+            frame.DataFrameHeader.CopyTo(rented);
             long declaredLength = ((long)rented[2] << 56) | ((long)rented[3] << 48) | ((long)rented[4] << 40) | ((long)rented[5] << 32)
                 | ((long)rented[6] << 24) | ((long)rented[7] << 16) | ((long)rented[8] << 8) | rented[9];
             Assert.Equal(70000, declaredLength);
@@ -92,11 +92,11 @@ public class DataFrameRegressionTests
         {
             Assert.True(frame.Masked);
             var segment = frame.Data;
-            for (int i = 0; i < segment.Count; i++)
+            for (int i = 0; i < segment.Length; i++)
             {
                 // 掩码键字节由该字节在负载内的序号决定
                 byte keyByte = (byte)(maskingKey >> ((i % 4) << 3));
-                restored.Add((byte)(segment.Array![segment.Offset + i] ^ keyByte));
+                restored.Add((byte)(segment[i] ^ keyByte));
             }
         }
         Assert.Equal(original, restored);
@@ -115,8 +115,8 @@ public class DataFrameRegressionTests
 
         var stream = new MemoryStream();
         var header = frame.DataFrameHeader;
-        stream.Write(header, 0, header.Length);
-        stream.Write(frame.Data.Array!, frame.Data.Offset, frame.Data.Count);
+        stream.Write(header);
+        stream.Write(frame.Data);
         stream.Position = 0;
 
         var parsed = new DataFrameReader(stream).Read().First();
