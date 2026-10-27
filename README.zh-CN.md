@@ -14,7 +14,7 @@
 - **有界通道** — 出站帧采用生产者-消费者模式，无无界队列
 - **事件驱动** — `OnMessageReceived`、`OnBytesReceived`、`OnCloseReceived`、`OnClientClose`、`OnPingReceived`、`OnPongReceived`
 - **多目标框架** — 支持 `net5.0`、`net6.0`、`net8.0`、`net9.0`、`net10.0`，启用可空引用类型
-- **握手超时** — 可配置超时时间，拒绝慢速 HTTP 升级请求
+- **握手超时** — 可配置超时时间，拒绝慢速 HTTP 升级请求。超时同样包含你的 `OnUpgradeRequest` 处理器的执行时间，请保持该处理器快速返回。握手的单行长度上限为 8 KB、头数量上限为 100 个（超出时回应 `431`）
 - **xUnit 测试** — 全面的单元测试，覆盖帧解析、关闭消息、HTTP 请求头、服务端和客户端
 
 ## 快速开始
@@ -166,7 +166,7 @@ dotnet test
 | `Ping(byte[])` / `PingAsync(byte[], CancellationToken)` | 发送 Ping 帧 |
 | `Pong(byte[])` / `PongAsync(byte[], CancellationToken)` | 发送 Pong 帧。收到 Ping 时库会自动回 Pong，此方法仅用于主动发送 |
 | `Open()` | 启动后台收发循环 |
-| `Close()` | 取消后台任务并释放 TCP 连接 |
+| `Close()` / `Close(CloseCode, string?)` | 发送 Close 帧（默认 1000，或指定状态码与不超过 123 字节 UTF-8 的原因），最多等待 5 秒让发送队列排空，然后释放 TCP 连接。关闭后再发送会抛出 `ChannelClosedException` |
 | `Dispose()` | `Close()` 的别名（实现 `IDisposable`） |
 | `OnMessageReceived` | `EventHandler<IWebSocketClient, string>` — 完整文本消息 |
 | `OnBytesReceived` | `EventHandler<IWebSocketClient, byte[]>` — 完整二进制消息 |
@@ -174,7 +174,7 @@ dotnet test
 | `OnPingReceived` | `EventHandler<IWebSocketClient, byte[]>` — 收到 Ping 帧 |
 | `OnPongReceived` | `EventHandler<IWebSocketClient, byte[]>` — 收到 Pong 帧 |
 | `OnClientClose` | `Action<IWebSocketClient>` — 连接关闭（本地或远端） |
-| `OnError` | `EventHandler<IWebSocketClient, Exception>` — 后台任务失败；未订阅时退回打印到控制台 |
+| `OnError` | `EventHandler<IWebSocketClient, Exception>` — 后台任务失败，或你的事件处理器抛出了异常（此时连接保持打开）；未订阅时退回打印到控制台。对端直接断开不算错误 |
 
 ### `WebSocketClient`
 
@@ -189,7 +189,7 @@ dotnet test
 | `Ping(byte[])` / `PingAsync(byte[])` | 发送 Ping 帧 |
 | `Pong(byte[])` / `PongAsync(byte[])` | 发送 Pong 帧 |
 | `Open()` | 启动后台收发循环 |
-| `Close()` | 取消后台任务并释放 TCP 连接 |
+| `Close()` / `Close(CloseCode, string?)` | 发送 Close 帧（默认 1000，或指定状态码与不超过 123 字节 UTF-8 的原因），最多等待 5 秒让发送队列排空，然后释放 TCP 连接。关闭后再发送会抛出 `ChannelClosedException` |
 | `Dispose()` | `Close()` 的别名 |
 
 ### `IHttpContext`（接口）

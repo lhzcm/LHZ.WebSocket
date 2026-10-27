@@ -67,7 +67,17 @@ namespace LHZ.WebSocket.Interfaces
         public System.Threading.Tasks.Task PongAsync(byte[] bytes, System.Threading.CancellationToken cancellationToken = default);
         /// <summary>Starts the reader and sender background tasks.</summary>
         public void Open();
-        /// <summary>Cancels background tasks and disposes the underlying TCP connection.</summary>
+        /// <summary>
+        /// Closes the connection with <see cref="CloseCode.Normal"/>: sends a Close frame, lets the
+        /// outgoing queue flush for a few seconds, then disposes the underlying TCP connection.
+        /// Sending after the connection is closed throws <see cref="System.Threading.Channels.ChannelClosedException"/>.
+        /// </summary>
         public void Close();
+        /// <summary>
+        /// Closes the connection, sending the given status code and optional reason in the Close frame.
+        /// </summary>
+        /// <param name="closeCode">The status code to send to the peer.</param>
+        /// <param name="reason">Optional reason; at most 123 bytes of UTF-8.</param>
+        public void Close(CloseCode closeCode, string? reason = null);
     }
 }

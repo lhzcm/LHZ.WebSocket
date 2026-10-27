@@ -185,23 +185,29 @@ namespace LHZ.WebSocket.Core
         }
         /// <summary>
         /// Creates an outgoing frame with the given opcode and payload.
-        /// <paramref name="opcode"/>
-        /// <paramref name="FIN"/>
-        /// <paramref name="data">send data, warring: if maskingKey > 0 then this array will be masked so the value will change</paramref>
-        /// <paramref name="maskingKey"/>
+        /// The payload is copied into a pooled buffer, so <paramref name="data"/> is never modified.
+        /// Dispose the frame to return the buffer to the pool.
         /// </summary>
+        /// <param name="opcode">The frame opcode.</param>
+        /// <param name="FIN">True if this is the final fragment of a message.</param>
+        /// <param name="data">The payload.</param>
+        /// <param name="maskingKey">Non-zero 4-byte masking key, or 0 for an unmasked frame.</param>
         public static DataFrame CreateDataFrame(OpCode opcode, bool FIN, byte[] data, UInt32 maskingKey = 0)
         {
             return CreateDataFrame(opcode, FIN, false, false, false, data, maskingKey);
         }
 
         /// <summary>
-        /// Creates an outgoing frame with the given opcode and payload.
-        /// <paramref name="opcode"/>
-        /// <paramref name="FIN"/>
-        /// <paramref name="data">send data, warring: if maskingKey > 0 then this array will be masked so the value will change</paramref>
-        /// <paramref name="maskingKey"/>
+        /// Creates an outgoing frame with the given opcode, reserved bits and payload.
+        /// The payload is copied into a pooled buffer, so <paramref name="data"/> is never modified.
         /// </summary>
+        /// <param name="opcode">The frame opcode.</param>
+        /// <param name="FIN">True if this is the final fragment of a message.</param>
+        /// <param name="RSV1">Reserved bit 1.</param>
+        /// <param name="RSV2">Reserved bit 2.</param>
+        /// <param name="RSV3">Reserved bit 3.</param>
+        /// <param name="data">The payload.</param>
+        /// <param name="maskingKey">Non-zero 4-byte masking key, or 0 for an unmasked frame.</param>
         public static DataFrame CreateDataFrame(OpCode opcode, bool FIN, bool RSV1, bool RSV2, bool RSV3, byte[] data, UInt32 maskingKey = 0)
         {
             var headerLength = GetHeaderLength(data.Length, maskingKey != 0);
@@ -211,17 +217,17 @@ namespace LHZ.WebSocket.Core
         }
 
         /// <summary>
-        /// Creates an outgoing frame with the given string payload.
-        /// <paramref name="text">send text, warring: if maskingKey > 0 then this array will be masked so the value will change</paramref>
-        /// <paramref name="maskingKey"/>
+        /// Creates a single, final (FIN) text frame with the given string payload.
         /// </summary>
+        /// <param name="text">The text, encoded as UTF-8.</param>
+        /// <param name="maskingKey">Non-zero 4-byte masking key, or 0 for an unmasked frame.</param>
         public static DataFrame CreateDataFrame(string text, UInt32 maskingKey = 0)
         {
             int payloadLength = Encoding.UTF8.GetByteCount(text);
             int headerLength = GetHeaderLength(payloadLength, maskingKey != 0);
             var buffer = ArrayPool<byte>.Shared.Rent(payloadLength + headerLength);
             Encoding.UTF8.GetBytes(text, 0, text.Length, buffer, headerLength);
-            return new DataFrame(buffer, payloadLength + headerLength, headerLength, false, false, false, false, OpCode.Text, maskingKey, maskingKey != 0);
+            return new DataFrame(buffer, payloadLength + headerLength, headerLength, true, false, false, false, OpCode.Text, maskingKey, maskingKey != 0);
         }
         private static int GetHeaderLength(int payloadLength, bool masked)
         {

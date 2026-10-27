@@ -85,6 +85,12 @@ namespace LHZ.WebSocket
         private Task? _senderTask;
 
         /// <summary>
+        /// Set (under <see cref="_stateLock"/>) by whoever starts a graceful shutdown, so
+        /// that only one Close frame is sent and only one caller drains and tears down.
+        /// </summary>
+        private bool _closing;
+
+        /// <summary>
         /// True when this client plays the client role (outbound connection).
         /// RFC 6455 §5.1 requires clients to mask every frame they send.
         /// </summary>
@@ -213,7 +219,7 @@ namespace LHZ.WebSocket
         /// <summary>
         /// Sends raw binary data to the peer.
         /// Blocks if the outgoing queue is full; prefer <see cref="SendByteAsync"/>.
-        /// <paramref name="bytes">send data, warring: this array will be masked so the value will change</paramref>
+        /// The data is copied, so <paramref name="bytes"/> is not modified.
         /// </summary>
         public void SendByte(byte[] bytes)
         {
@@ -222,7 +228,7 @@ namespace LHZ.WebSocket
 
         /// <summary>
         /// Sends raw binary data to the peer without blocking the caller.
-        /// <paramref name="bytes">send data, warring: this array will be masked so the value will change</paramref>
+        /// The data is copied, so <paramref name="bytes"/> is not modified.
         /// </summary>
         public Task SendByteAsync(byte[] bytes, CancellationToken cancellationToken = default)
         {
@@ -293,7 +299,7 @@ namespace LHZ.WebSocket
         /// must not stall on a full outgoing queue when the peer has stopped reading.
         /// Failures are reported but otherwise ignored: the connection is already closing.
         /// </summary>
-        private void TrySendClose(CloseCode closeCode, bool includeCode = true)
+        private void TrySendClose(CloseCode closeCode, bool includeCode = true, byte[]? reason = null)
         {
             try
             {
@@ -304,9 +310,10 @@ namespace LHZ.WebSocket
                 }
                 else
                 {
-                    payload = new byte[2];
+                    payload = new byte[2 + (reason?.Length ?? 0)];
                     payload[0] = (byte)(((int)closeCode >> 8) & 0xFF);
                     payload[1] = (byte)((int)closeCode & 0xFF);
+                    reason?.CopyTo(payload, 2);
                 }
                 var dataFrame = DataFrame.CreateDataFrame(OpCode.Close, true, payload, NextMaskingKey());
                 _channel.Writer.TryWrite(dataFrame);
@@ -355,10 +362,84 @@ namespace LHZ.WebSocket
         }
 
         /// <summary>
-        /// Cancels background tasks and disposes the underlying TCP connection.
+        /// Closes the connection with status <see cref="CloseCode.Normal"/>: sends a Close frame,
+        /// gives the outgoing queue a short window to flush, then disposes the TCP connection.
         /// Safe to call concurrently and more than once; the close event fires exactly once.
         /// </summary>
         public void Close()
+        {
+            Close(CloseCode.Normal, null);
+        }
+
+        /// <summary>
+        /// Closes the connection, telling the peer why (RFC 6455 §7.1.2): sends a Close frame,
+        /// gives the outgoing queue a short window to flush, then disposes the TCP connection.
+        /// Safe to call concurrently and more than once; the close event fires exactly once.
+        /// </summary>
+        /// <param name="closeCode">The status code to send to the peer.</param>
+        /// <param name="reason">Optional human-readable reason; at most 123 bytes of UTF-8.</param>
+        public void Close(CloseCode closeCode, string? reason = null)
+        {
+            byte[]? reasonBytes = null;
+            if (!string.IsNullOrEmpty(reason))
+            {
+                reasonBytes = Encoding.UTF8.GetBytes(reason);
+                // 125 byte control frame payload, minus the 2 byte status code.
+                if (reasonBytes.Length > 123)
+                {
+                    throw new ArgumentException("The close reason must not exceed 123 bytes of UTF-8", nameof(reason));
+                }
+            }
+            bool graceful = false;
+            lock (_stateLock)
+            {
+                if (_clientStatus == ClientStatus.Close)
+                {
+                    return;
+                }
+                // A connection that was never opened has no sender to flush through.
+                if (_clientStatus == ClientStatus.Opened)
+                {
+                    // Someone else (a remote Close, a protocol failure, or another Close call)
+                    // is already shutting the connection down and will finish the job.
+                    if (_closing)
+                    {
+                        return;
+                    }
+                    _closing = true;
+                    graceful = true;
+                }
+            }
+            if (graceful)
+            {
+                TrySendClose(closeCode, true, reasonBytes);
+                _channel.Writer.TryComplete();
+                WaitForSender();
+            }
+            Teardown();
+        }
+
+        /// <summary>Waits briefly for the sender task to write out everything that is queued.</summary>
+        private void WaitForSender()
+        {
+            try
+            {
+                // Wait on the sender *task*, not on the channel: the channel reports itself
+                // drained as soon as the last frame is dequeued, before it reached the socket.
+                _senderTask?.Wait(TimeSpan.FromSeconds(5));
+            }
+            catch (Exception)
+            {
+                // Draining is best effort; the connection is going away either way.
+            }
+        }
+
+        /// <summary>
+        /// Cancels background tasks and disposes the underlying TCP connection without any
+        /// closing handshake. Safe to call concurrently and more than once; the close event
+        /// fires exactly once.
+        /// </summary>
+        private void Teardown()
         {
             // Claim the transition under the lock so concurrent callers (the receiver task,
             // the sender task and WebSocketServer.Stop) cannot double-dispose the socket
@@ -371,6 +452,8 @@ namespace LHZ.WebSocket
                 }
                 _clientStatus = ClientStatus.Close;
             }
+            // Refuse further sends instead of silently queueing them for a dead connection.
+            _channel.Writer.TryComplete();
             try
             {
                 _cts.Cancel();
@@ -393,8 +476,21 @@ namespace LHZ.WebSocket
             // be observing its token, and disposing the source out from under them would turn
             // a clean shutdown into an ObjectDisposedException.
 
+            // Frames that never reached the socket still own pooled buffers.
+            while (_channel.Reader.TryRead(out var pending))
+            {
+                pending.Dispose();
+            }
+
             // Raised outside the lock: handlers may call back into this client.
-            OnClientClose?.Invoke(this);
+            try
+            {
+                OnClientClose?.Invoke(this);
+            }
+            catch (Exception ex)
+            {
+                ReportError(ex);
+            }
         }
 
         /// <summary>
@@ -407,7 +503,9 @@ namespace LHZ.WebSocket
             {
                 try
                 {
-                    var dataFrameReader = new DataFrameReader(_networkStream);
+                    // The reader consults MaxMessageSize per frame, so an oversized frame is
+                    // refused from its header alone, before any memory is committed to it.
+                    var dataFrameReader = new DataFrameReader(_networkStream, () => MaxMessageSize);
                     List<DataFrame> dataFrames = new List<DataFrame>();
                     long fragmentedLength = 0;
                     await foreach (var item in dataFrameReader.ReadAsync(_cts.Token))
@@ -493,12 +591,17 @@ namespace LHZ.WebSocket
                 catch (OperationCanceledException)
                 {
                     // Normal shutdown triggered by Close().
-                    Close();
+                    Teardown();
                 }
                 catch (Exception ex)
                 {
-                    ReportError(ex);
-                    Close();
+                    // A peer that simply hung up is an ordinary end of the connection (1006),
+                    // not a failure worth reporting.
+                    if (!IsConnectionLost(ex))
+                    {
+                        ReportError(ex);
+                    }
+                    Teardown();
                 }
             });
         }
@@ -565,10 +668,19 @@ namespace LHZ.WebSocket
         /// <summary>
         /// Queues a Close frame, stops accepting new frames, and gives the sender task a
         /// short window to flush the queue before the socket is torn down. Without the drain
-        /// the close frame would usually be discarded by the immediately following Close().
+        /// the close frame would usually be discarded by the immediately following Teardown().
         /// </summary>
         private async Task CloseAfterDrainAsync(CloseCode closeCode, bool includeCode)
         {
+            lock (_stateLock)
+            {
+                // A local Close() already sent its own Close frame and will tear down.
+                if (_closing || _clientStatus != ClientStatus.Opened)
+                {
+                    return;
+                }
+                _closing = true;
+            }
             TrySendClose(closeCode, includeCode);
             _channel.Writer.TryComplete();
             try
@@ -586,7 +698,39 @@ namespace LHZ.WebSocket
             {
                 // Draining is best effort; the connection is going away either way.
             }
-            Close();
+            Teardown();
+        }
+
+        /// <summary>
+        /// True for the failures that simply mean the connection is gone: the peer hung up,
+        /// reset the socket, or this side already disposed it. These are not errors.
+        /// </summary>
+        private static bool IsConnectionLost(Exception ex)
+        {
+            return ex is IOException || ex is ObjectDisposedException || ex is SocketException;
+        }
+
+        /// <summary>
+        /// Invokes each subscriber separately, so one that throws is reported through
+        /// <see cref="OnError"/> instead of failing the connection or starving the others.
+        /// </summary>
+        private void Raise<T>(Delegates.EventHandler<IWebSocketClient, T>? handler, T argument)
+        {
+            if (handler == null)
+            {
+                return;
+            }
+            foreach (var subscriber in handler.GetInvocationList())
+            {
+                try
+                {
+                    ((Delegates.EventHandler<IWebSocketClient, T>)subscriber)(this, argument);
+                }
+                catch (Exception ex)
+                {
+                    ReportError(ex);
+                }
+            }
         }
 
         /// <summary>
@@ -614,7 +758,7 @@ namespace LHZ.WebSocket
         {
             switch (opCode)
             {
-                case OpCode.Binary: OnBytesReceived?.Invoke(this, data); break;
+                case OpCode.Binary: Raise(OnBytesReceived, data); break;
                 case OpCode.Close:
                     {
                         // RFC 6455 §5.5.1: a Close frame payload is either empty
@@ -642,7 +786,7 @@ namespace LHZ.WebSocket
                         // Auto-reply with a Close frame of our own (RFC 6455 §5.5.1: upon
                         // receiving a Close frame, an endpoint sends a Close frame in response),
                         // before raising the event so user code may Close() right away.
-                        OnCloseReceived?.Invoke(this, closeMessage);
+                        Raise(OnCloseReceived, closeMessage);
                         // Flush the acknowledgement, then tear the connection down. Fire and
                         // forget: this runs on the receiver task, which must not block here.
                         _ = CloseAfterDrainAsync(ackCode, echoCode);
@@ -652,7 +796,7 @@ namespace LHZ.WebSocket
                     {
                         // §8.1: invalid UTF-8 in a text message must fail the connection with 1007.
                         var str = DecodeUtf8(data, 0, data.Length);
-                        OnMessageReceived?.Invoke(this, str); break;
+                        Raise(OnMessageReceived, str); break;
                     }
                 case OpCode.Ping:
                     {
@@ -667,12 +811,12 @@ namespace LHZ.WebSocket
                         {
                             ReportError(ex);
                         }
-                        OnPingReceived?.Invoke(this, data);
+                        Raise(OnPingReceived, data);
                         break;
                     }
                 case OpCode.Pong:
                     {
-                        OnPongReceived?.Invoke(this, data);
+                        Raise(OnPongReceived, data);
                         break;
                     }
                 default: throw new WebSocketProtocolException(CloseCode.ProtocolError, "OpCode not Support");
@@ -757,8 +901,11 @@ namespace LHZ.WebSocket
                 }
                 catch (Exception ex)
                 {
-                    ReportError(ex);
-                    Close();
+                    if (!IsConnectionLost(ex))
+                    {
+                        ReportError(ex);
+                    }
+                    Teardown();
                 }
             });
         }

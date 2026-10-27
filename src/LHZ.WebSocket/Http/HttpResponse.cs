@@ -108,8 +108,10 @@ namespace LHZ.WebSocket.Http
 
             // Read headers until empty line
             string line;
+            int headerCount = 0;
             while (!string.IsNullOrEmpty(line = ReadLine(stream)))
             {
+                HttpParser.CheckHeaderCount(++headerCount);
                 int colonIndex = line.IndexOf(':');
                 if (colonIndex > 0)
                 {
@@ -131,20 +133,7 @@ namespace LHZ.WebSocket.Http
 
         private string ReadLine(Stream stream)
         {
-            var sb = new StringBuilder();
-            int prev = -1;
-            int cur;
-            while ((cur = stream.ReadByte()) != -1)
-            {
-                if (prev == '\r' && cur == '\n')
-                {
-                    sb.Length--; // Remove trailing \r
-                    return sb.ToString();
-                }
-                sb.Append((char)cur);
-                prev = cur;
-            }
-            return sb.ToString();
+            return HttpParser.ReadLine(stream);
         }
     }
 }

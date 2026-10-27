@@ -23,6 +23,8 @@ namespace LHZ.WebSocket
         private readonly object _lock = new object();
         private CancellationTokenSource? _cancellationTokenSource;
         private Task? _task;
+        /// <summary>Incremented by every Start(), identifying which accept loop is current.</summary>
+        private int _generation;
         private int _timeOut = 10;
 
         /// <summary>Raised when an HTTP upgrade request is received, before the handshake completes.</summary>
@@ -113,7 +115,7 @@ namespace LHZ.WebSocket
                 {
                     _serverStatus = ServerStatus.Start;
                     _cancellationTokenSource = new CancellationTokenSource();
-                    _task = StartWithNewTask(_cancellationTokenSource.Token);
+                    _task = StartWithNewTask(_cancellationTokenSource.Token, ++_generation);
                 }
             }
         }
@@ -122,7 +124,7 @@ namespace LHZ.WebSocket
         /// Main accept loop: waits for TCP connections, and dispatches each connection
         /// to a background task so a slow handshake never blocks other clients.
         /// </summary>
-        private async Task StartWithNewTask(CancellationToken cancellationToken)
+        private async Task StartWithNewTask(CancellationToken cancellationToken, int generation)
         {
             TcpListener? listener = null;
             try
@@ -159,7 +161,12 @@ namespace LHZ.WebSocket
 #endif
                 lock (_lock)
                 {
-                    _serverStatus = ServerStatus.Closed;
+                    // A loop from an earlier Start() that finishes late must not mark a
+                    // server that has since been started again as closed.
+                    if (generation == _generation)
+                    {
+                        _serverStatus = ServerStatus.Closed;
+                    }
                 }
             }
         }
@@ -187,8 +194,46 @@ namespace LHZ.WebSocket
             }
             catch (Exception ex)
             {
-                tcpClient?.Dispose();
+                if (ex is HttpParseException)
+                {
+                    DrainAndDispose(tcpClient);
+                }
+                else
+                {
+                    tcpClient?.Dispose();
+                }
                 ReportError(ex);
+            }
+        }
+
+        /// <summary>
+        /// Closes a connection that was refused with an HTTP error response. Closing a socket
+        /// that still has unread input makes TCP send a reset, which can destroy the response
+        /// before the peer reads it. So: half-close, read off a bounded amount of the leftover
+        /// request, then dispose.
+        /// </summary>
+        private static void DrainAndDispose(TcpClient tcpClient)
+        {
+            try
+            {
+                tcpClient.Client.Shutdown(SocketShutdown.Send);
+                tcpClient.ReceiveTimeout = 1000;
+                var stream = tcpClient.GetStream();
+                var buffer = new byte[4096];
+                int total = 0;
+                int read;
+                while (total < 64 * 1024 && (read = stream.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    total += read;
+                }
+            }
+            catch (Exception)
+            {
+                // The peer is gone or too slow; either way the connection is finished.
+            }
+            finally
+            {
+                tcpClient.Dispose();
             }
         }
 
@@ -219,34 +264,51 @@ namespace LHZ.WebSocket
         /// </summary>
         public void Stop()
         {
+            CancellationTokenSource? cancellationTokenSource;
+            Task? task;
             lock (_lock)
             {
                 if (_serverStatus != ServerStatus.Start)
                     return;
                 _serverStatus = ServerStatus.Closing;
+                // Take ownership of this run's state. Once the accept loop reports Closed,
+                // Start() may run again and install its own; Stop must not touch that.
+                cancellationTokenSource = _cancellationTokenSource;
+                task = _task;
+                _cancellationTokenSource = null;
+                _task = null;
             }
-            foreach (var item in WebSocketClients)
-            {
-                item.Close();
-            }
-            _cancellationTokenSource?.Cancel();
+            // Each Close() may wait for its peer to drain, so close the clients side by side
+            // instead of one after another.
+            var closing = WebSocketClients.Select(item => Task.Run(() => item.Close())).ToArray();
             try
             {
-                _task?.Wait(TimeSpan.FromSeconds(5));
+                Task.WaitAll(closing);
+            }
+            catch (AggregateException)
+            {
+                // A client failing to close must not keep the listener running.
+            }
+            cancellationTokenSource?.Cancel();
+            try
+            {
+                task?.Wait(TimeSpan.FromSeconds(5));
             }
             catch (AggregateException)
             {
                 // Accept loop already terminated with an error; ignore.
             }
-            _cancellationTokenSource?.Dispose();
-            _cancellationTokenSource = null;
-            _task = null;
+            cancellationTokenSource?.Dispose();
             // The accept loop's finally normally sets Closed. If it had already faulted, or
             // did not finish inside the timeout, force the transition anyway: leaving the
-            // server stuck in Closing would make Start() refuse to run again.
+            // server stuck in Closing would make Start() refuse to run again. Only do so while
+            // still Closing: Start() is already allowed once the loop reported Closed.
             lock (_lock)
             {
-                _serverStatus = ServerStatus.Closed;
+                if (_serverStatus == ServerStatus.Closing)
+                {
+                    _serverStatus = ServerStatus.Closed;
+                }
             }
         }
 

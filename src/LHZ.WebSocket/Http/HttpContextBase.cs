@@ -69,7 +69,26 @@ namespace LHZ.WebSocket.Http
             }
             if (_request == null)
             {
-                _request = HttpRequest.GetRequestFromStream(_stream);
+                try
+                {
+                    _request = HttpRequest.GetRequestFromStream(_stream);
+                }
+                catch (HttpParseException ex)
+                {
+                    // An oversized or malformed request: tell the peer why, then let the caller
+                    // drop the connection. The handshake never reached the upgrade stage.
+                    CancelTimeOut();
+                    _status = (int)HttpContextStatus.Rejected;
+                    try
+                    {
+                        new HttpResponse(ex.StatusCode, "HTTP/1.1").WriteToStream(_stream);
+                    }
+                    catch (Exception)
+                    {
+                        // Client already gone; nothing more to do.
+                    }
+                    throw;
+                }
             }
         }
 

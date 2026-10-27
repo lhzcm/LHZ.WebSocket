@@ -14,7 +14,7 @@ A lightweight, zero-dependency WebSocket library for .NET, implementing RFC 6455
 - **Bounded channel** — producer-consumer pattern for outgoing frames; no unbounded queues
 - **Event-driven** — `OnMessageReceived`, `OnBytesReceived`, `OnCloseReceived`, `OnClientClose`, `OnPingReceived`, `OnPongReceived`
 - **Multi-targeting** — `net5.0`, `net6.0`, `net8.0`, `net9.0`, `net10.0` with nullable reference types enabled
-- **Handshake timeout** — configurable timeout to reject slow HTTP upgrade requests
+- **Handshake timeout** — configurable timeout to reject slow HTTP upgrade requests. It also covers the time your `OnUpgradeRequest` handler takes, so keep that handler quick. Handshake lines are capped at 8 KB and 100 headers (answered with `431`)
 - **xUnit tested** — comprehensive unit tests for frame parsing, close messages, HTTP headers, server, and client
 
 ## Quick Start
@@ -169,7 +169,7 @@ dotnet test
 | `Ping(byte[])` / `PingAsync(byte[], CancellationToken)` | Send a Ping frame |
 | `Pong(byte[])` / `PongAsync(byte[], CancellationToken)` | Send a Pong frame. A Pong is sent automatically on every incoming Ping, so this is only needed for unsolicited Pongs |
 | `Open()` | Start the background send/receive loops |
-| `Close()` | Cancel tasks and dispose the TCP connection |
+| `Close()` / `Close(CloseCode, string?)` | Send a Close frame (1000, or the given code and reason of at most 123 UTF-8 bytes), give the outgoing queue up to 5 seconds to flush, then dispose the TCP connection. Sending afterwards throws `ChannelClosedException` |
 | `Dispose()` | Alias for `Close()` (implements `IDisposable`) |
 | `OnMessageReceived` | `EventHandler<IWebSocketClient, string>` — complete text message |
 | `OnBytesReceived` | `EventHandler<IWebSocketClient, byte[]>` — complete binary message |
@@ -177,7 +177,7 @@ dotnet test
 | `OnPingReceived` | `EventHandler<IWebSocketClient, byte[]>` — Ping frame received |
 | `OnPongReceived` | `EventHandler<IWebSocketClient, byte[]>` — Pong frame received |
 | `OnClientClose` | `Action<IWebSocketClient>` — connection closed (local or remote) |
-| `OnError` | `EventHandler<IWebSocketClient, Exception>` — a background task failed; falls back to the console when unsubscribed |
+| `OnError` | `EventHandler<IWebSocketClient, Exception>` — a background task failed, or one of your event handlers threw (the connection stays open in that case); falls back to the console when unsubscribed. A peer that simply disconnects is not an error |
 
 ### `WebSocketClient`
 
@@ -192,7 +192,7 @@ dotnet test
 | `Ping(byte[])` / `PingAsync(byte[])` | Send a Ping frame |
 | `Pong(byte[])` / `PongAsync(byte[])` | Send a Pong frame |
 | `Open()` | Start background send/receive loops |
-| `Close()` | Cancel tasks and dispose the TCP connection |
+| `Close()` / `Close(CloseCode, string?)` | Send a Close frame (1000, or the given code and reason of at most 123 UTF-8 bytes), give the outgoing queue up to 5 seconds to flush, then dispose the TCP connection. Sending afterwards throws `ChannelClosedException` |
 | `Dispose()` | Alias for `Close()` |
 
 ### `IHttpContext` (interface)

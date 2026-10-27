@@ -1,10 +1,13 @@
 using System;
 using System.Buffers;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using LHZ.WebSocket.Enums;
+using LHZ.WebSocket.Exceptions;
 
 namespace LHZ.WebSocket.Core
 {
@@ -15,12 +18,60 @@ namespace LHZ.WebSocket.Core
     public class DataFrameReader
     {
         private readonly Stream _stream;
+        private readonly Func<int>? _maxPayloadLength;
 
         /// <summary>Creates a reader over the given stream.</summary>
         /// <param name="stream">The stream to read frames from.</param>
         public DataFrameReader(Stream stream)
         {
             _stream = stream;
+        }
+
+        /// <summary>
+        /// Creates a reader that rejects a data frame whose declared payload exceeds the limit
+        /// <em>before</em> any buffer is allocated for it, so a peer cannot make the process
+        /// allocate gigabytes by lying in the frame header.
+        /// </summary>
+        /// <param name="stream">The stream to read frames from.</param>
+        /// <param name="maxPayloadLength">Returns the largest accepted data frame payload; 0 or less means unlimited.</param>
+        internal DataFrameReader(Stream stream, Func<int> maxPayloadLength) : this(stream)
+        {
+            _maxPayloadLength = maxPayloadLength;
+        }
+
+        /// <summary>
+        /// Validates the length declared in a frame header before a buffer is rented for it
+        /// (RFC 6455 §5.2: lengths use the shortest encoding and the top bit of a 64-bit length
+        /// must be zero; §5.5: control frames carry at most 125 bytes).
+        /// </summary>
+        /// <param name="firstByte">First header byte: FIN, RSV1-3 and opcode.</param>
+        /// <param name="lengthMarker">The 7-bit length field: the length itself, or 126/127.</param>
+        /// <param name="length">The decoded payload length.</param>
+        private void CheckPayloadLength(byte firstByte, int lengthMarker, ulong length)
+        {
+            if ((lengthMarker == 126 && length < 126) || (lengthMarker == 127 && length <= ushort.MaxValue))
+            {
+                throw new WebSocketProtocolException(CloseCode.ProtocolError, "Payload length must use the shortest encoding");
+            }
+            if (length >> 63 != 0)
+            {
+                throw new WebSocketProtocolException(CloseCode.ProtocolError, "The most significant bit of a 64-bit payload length must be zero");
+            }
+            // Control frames are those whose opcode has the high bit set (0x8 Close, 0x9 Ping, 0xA Pong).
+            bool isControl = (firstByte & 0x08) != 0;
+            if (isControl)
+            {
+                if (length > 125)
+                {
+                    throw new WebSocketProtocolException(CloseCode.ProtocolError, "Control frame payload must not exceed 125 bytes");
+                }
+                return;
+            }
+            int limit = _maxPayloadLength?.Invoke() ?? 0;
+            if ((limit > 0 && length > (ulong)limit) || length > int.MaxValue - 14)
+            {
+                throw new WebSocketProtocolException(CloseCode.MessageTooBig, $"Frame payload of {length} bytes is too large");
+            }
         }
 
         /// <summary>Yields data frames synchronously until a close frame is encountered.</summary>
@@ -62,29 +113,28 @@ namespace LHZ.WebSocket.Core
         {
             Span<byte> header = stackalloc byte[2];
             StreamReadExact(header);
-            int payloadLength = (byte)(header[1] & 0x7F);
+            int lengthMarker = header[1] & 0x7F;
+            ulong declaredLength = (ulong)lengthMarker;
             bool masked = (header[1] & 0x80) == 0x80;
             UInt32 maskingKey = 0;
             int headerLength = 2;
             // Extended payload length: 2 bytes for 126, 8 bytes for 127
-            if (payloadLength == 126)
+            if (lengthMarker == 126)
             {
                 Span<byte> lengthBytes = stackalloc byte[2];
                 StreamReadExact(lengthBytes);
                 headerLength += 2;
-                payloadLength = (((int)lengthBytes[0]) << 8) | lengthBytes[1];
+                declaredLength = BinaryPrimitives.ReadUInt16BigEndian(lengthBytes);
             }
-            else if (payloadLength == 127)
+            else if (lengthMarker == 127)
             {
                 Span<byte> lengthBytes = stackalloc byte[8];
                 StreamReadExact(lengthBytes);
-                if (lengthBytes[0] != 0 || lengthBytes[1] != 0 || lengthBytes[2] != 0 || lengthBytes[3] != 0)
-                {
-                    throw new Exception($"Single frame data not larger than {int.MaxValue} bytes");
-                }
                 headerLength += 8;
-                payloadLength = (((int)lengthBytes[4]) << 24) | (((int)lengthBytes[5]) << 16) | (((int)lengthBytes[6]) << 8) | lengthBytes[7];
+                declaredLength = BinaryPrimitives.ReadUInt64BigEndian(lengthBytes);
             }
+            CheckPayloadLength(header[0], lengthMarker, declaredLength);
+            int payloadLength = (int)declaredLength;
 
             if (masked)
             {
@@ -124,15 +174,15 @@ namespace LHZ.WebSocket.Core
                     headerBytesRead += bytesRead;
                 }
 
-                int payloadLength = (byte)(headerBuffer[1] & 0x7F);
+                int lengthMarker = headerBuffer[1] & 0x7F;
                 bool masked = (headerBuffer[1] & 0x80) == 0x80;
                 int headerLength = 2;
                 // Extended payload length: 2 bytes for 126, 8 bytes for 127
-                if (payloadLength == 126)
+                if (lengthMarker == 126)
                 {
                     headerLength += 2;
                 }
-                else if (payloadLength == 127)
+                else if (lengthMarker == 127)
                 {
                     headerLength += 8;
                 }
@@ -154,18 +204,18 @@ namespace LHZ.WebSocket.Core
                     headerBytesRead += bytesRead;
                 }
 
-                if (payloadLength == 126)
+                ulong declaredLength = (ulong)lengthMarker;
+                if (lengthMarker == 126)
                 {
-                    payloadLength = (((int)headerBuffer[2]) << 8) | headerBuffer[3];
+                    declaredLength = BinaryPrimitives.ReadUInt16BigEndian(headerBuffer.AsSpan(2, 2));
                 }
-                else if (payloadLength == 127)
+                else if (lengthMarker == 127)
                 {
-                    if (headerBuffer[2] != 0 || headerBuffer[3] != 0 || headerBuffer[4] != 0 || headerBuffer[5] != 0)
-                    {
-                        throw new Exception($"Single frame data not larger than {int.MaxValue} bytes");
-                    }
-                    payloadLength = (((int)headerBuffer[6]) << 24) | (((int)headerBuffer[7]) << 16) | (((int)headerBuffer[8]) << 8) | headerBuffer[9];
+                    declaredLength = BinaryPrimitives.ReadUInt64BigEndian(headerBuffer.AsSpan(2, 8));
                 }
+                // Reject an oversized or malformed length before renting a buffer for it.
+                CheckPayloadLength(headerBuffer[0], lengthMarker, declaredLength);
+                int payloadLength = (int)declaredLength;
 
                 UInt32 maskingKey = 0;
                 if (masked)
