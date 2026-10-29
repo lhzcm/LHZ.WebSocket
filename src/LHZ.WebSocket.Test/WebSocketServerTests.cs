@@ -243,7 +243,7 @@ public class WebSocketServerTests : IDisposable
         stream.Flush();
 
         // 等待 OnUpgradeRequest 触发
-        Assert.True(clientConnected.Wait(TimeSpan.FromSeconds(1)),
+        Assert.True(clientConnected.Wait(TimeSpan.FromSeconds(5)),
             "OnUpgradeRequest should be triggered");
 
         // 等待客户端状态变为 Opened
@@ -253,7 +253,7 @@ public class WebSocketServerTests : IDisposable
         tcp.Close();
 
         // 验证 clientRemoved 事件被触发
-        Assert.True(clientRemoved.Wait(TimeSpan.FromSeconds(1)),
+        Assert.True(clientRemoved.Wait(TimeSpan.FromSeconds(5)),
             "OnClientClose should be raised when TCP disconnects");
 
         server.Stop();

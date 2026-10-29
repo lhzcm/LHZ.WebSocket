@@ -5,3 +5,5 @@ test-client.html
 chat-client.html
 LHZ.WebSocket.ChatServer/
 .perf/
+BenchmarkDotNet.Artifacts/
+src/LHZ.WebSocket.Benchmarks/
