@@ -548,6 +548,109 @@ public class HardeningTests
 
     #endregion
 
+    #region 文本直接编码进帧缓冲
+
+    /// <summary>
+    /// SendMessage 把文本直接编码进池化帧缓冲(先 GetByteCount 定长度,再 GetBytes 写入)。
+    /// 空串、多字节、代理对、孤立代理项,两次计算必须一致,否则帧会错位。
+    /// </summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData("hello")]
+    [InlineData("héllo 你好 😀")]
+    [InlineData("lone-high-surrogate-\uD83D")]
+    public async Task SendMessage_Text_ShouldRoundTripExactly(string text)
+    {
+        int port = GetPort();
+        var server = new WebSocketServer(IPAddress.Loopback, port);
+        server.OnUpgradeRequest += ctx =>
+        {
+            var client = ctx.HttpUpgrade();
+            client.OnMessageReceived += (sender, message) => sender.SendMessage(message);
+        };
+        server.Start();
+        try
+        {
+            using var client = WebSocketClient.CreateWebSocketClient($"ws://127.0.0.1:{port}/");
+            var echoed = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            client.OnMessageReceived += (_, message) => echoed.TrySetResult(message);
+            client.Open();
+
+            await client.SendMessageAsync(text);
+
+            var result = await echoed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            // 孤立的高代理项在 UTF-8 编码时被替换为 U+FFFD,往返后得到的就是替换后的文本。
+            var expected = Encoding.UTF8.GetString(Encoding.UTF8.GetBytes(text));
+            Assert.Equal(expected, result);
+        }
+        finally
+        {
+            server.Stop();
+        }
+    }
+
+    [Theory]
+    [InlineData(125)]
+    [InlineData(126)]
+    [InlineData(65535)]
+    [InlineData(65536)]
+    [InlineData(200000)]
+    public void SendMessage_AtLengthEncodingBoundaries_ShouldRoundTripExactly(int length)
+    {
+        int port = GetPort();
+        var server = new WebSocketServer(IPAddress.Loopback, port);
+        server.OnUpgradeRequest += ctx =>
+        {
+            var client = ctx.HttpUpgrade();
+            client.MaxMessageSize = 0;
+            client.OnMessageReceived += (sender, message) => sender.SendMessage(message);
+        };
+        server.Start();
+        try
+        {
+            using var client = WebSocketClient.CreateWebSocketClient($"ws://127.0.0.1:{port}/");
+            client.MaxMessageSize = 0;
+            var echoed = new ManualResetEventSlim(false);
+            string? result = null;
+            client.OnMessageReceived += (_, message) => { result = message; echoed.Set(); };
+            client.Open();
+
+            // 末尾放一个多字节字符,使字节数比字符数多 1,正好跨越长度编码的边界
+            var text = new string('a', length - 1) + "é";
+            client.SendMessage(text);
+
+            Assert.True(echoed.Wait(5000));
+            Assert.Equal(text, result);
+        }
+        finally
+        {
+            server.Stop();
+        }
+    }
+
+    [Fact]
+    public void SendMessage_Null_ShouldThrowAndLeaveConnectionOpen()
+    {
+        int port = GetPort();
+        var server = new WebSocketServer(IPAddress.Loopback, port);
+        server.OnUpgradeRequest += ctx => ctx.HttpUpgrade();
+        server.Start();
+        try
+        {
+            using var client = WebSocketClient.CreateWebSocketClient($"ws://127.0.0.1:{port}/");
+            client.Open();
+
+            Assert.Throws<ArgumentNullException>(() => client.SendMessage(null!));
+            Assert.Equal(ClientStatus.Opened, client.Status);
+        }
+        finally
+        {
+            server.Stop();
+        }
+    }
+
+    #endregion
+
     #region 服务端重启
 
     [Fact]

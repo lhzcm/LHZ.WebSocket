@@ -207,13 +207,14 @@ namespace LHZ.WebSocket
         /// </summary>
         public void SendMessage(string message)
         {
-            Send(OpCode.Text, System.Text.Encoding.UTF8.GetBytes(message));
+            // Encoded straight into the frame's pooled buffer: no intermediate byte[].
+            Send(DataFrame.CreateDataFrame(message, NextMaskingKey()));
         }
 
         /// <summary>Sends a UTF-8 text message to the peer without blocking the caller.</summary>
         public Task SendMessageAsync(string message, CancellationToken cancellationToken = default)
         {
-            return SendAsync(OpCode.Text, System.Text.Encoding.UTF8.GetBytes(message), cancellationToken);
+            return SendAsync(DataFrame.CreateDataFrame(message, NextMaskingKey()), cancellationToken);
         }
 
         /// <summary>
@@ -271,7 +272,15 @@ namespace LHZ.WebSocket
         /// </summary>
         protected void Send(OpCode opCode, byte[] bytes)
         {
-            var dataFrame = DataFrame.CreateDataFrame(opCode, true, bytes, NextMaskingKey());
+            Send(DataFrame.CreateDataFrame(opCode, true, bytes, NextMaskingKey()));
+        }
+
+        /// <summary>
+        /// Enqueues an already built frame, taking ownership of its pooled buffer.
+        /// Blocks the caller while the channel is full.
+        /// </summary>
+        private void Send(DataFrame dataFrame)
+        {
             try
             {
                 // ChannelWriter.WriteAsync returns a ValueTask that is incomplete while the
@@ -290,7 +299,12 @@ namespace LHZ.WebSocket
         /// <summary>Enqueues a data frame onto the outgoing channel without blocking.</summary>
         protected Task SendAsync(OpCode opCode, byte[] bytes, CancellationToken cancellationToken = default)
         {
-            var dataFrame = DataFrame.CreateDataFrame(opCode, true, bytes, NextMaskingKey());
+            return SendAsync(DataFrame.CreateDataFrame(opCode, true, bytes, NextMaskingKey()), cancellationToken);
+        }
+
+        /// <summary>Enqueues an already built frame without blocking, taking ownership of its pooled buffer.</summary>
+        private Task SendAsync(DataFrame dataFrame, CancellationToken cancellationToken)
+        {
             return _channel.Writer.WriteAsync(dataFrame, cancellationToken).AsTask();
         }
 
