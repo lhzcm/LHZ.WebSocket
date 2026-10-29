@@ -3,13 +3,28 @@
     <TargetFrameworks>net5.0;net6.0;net8.0;net9.0;net10.0</TargetFrameworks>
     <LangVersion>13.0</LangVersion>
     <Nullable>enable</Nullable>
-    <Version>1.2.0</Version>
+    <Version>1.3.0</Version>
     <Authors>LHZ</Authors>
     <Description>A lightweight, zero-dependency WebSocket library for .NET, implementing RFC 6455 from the ground up using raw TcpListener/TcpClient. Supports both server-side and client-side WebSocket connections.</Description>
     <PackageIcon>logo.png</PackageIcon>
     <RepositoryType>Git</RepositoryType>
     <RepositoryUrl>https://github.com/lhzcm/LHZ.WebSocket</RepositoryUrl>
-    <PackageReleaseNotes>1.2.0:
+    <PackageReleaseNotes>1.3.0:
+- BREAKING: IWebSocketClient gained Close(CloseCode, string?), so any third-party implementation of the interface must be updated
+- BREAKING: DataFrame is now backed by a pooled buffer and implements IDisposable. DataFrame.Data and DataFrameHeader return spans, and DataFrameHeaderFull was removed. Callers using Data.Count/Data.Array/Data.Offset must switch to Data.Length and span indexing, and must dispose frames they create
+- Change: Close() now sends a Close frame (1000) and gives the outgoing queue up to 5 s to flush before tearing down. New overload Close(CloseCode, string?), the reason is limited to 123 UTF-8 bytes
+- Change: an exception thrown by a user event handler is reported through OnError and no longer closes the connection, and each subscriber is invoked separately
+- Change: a peer that drops the TCP connection closes the client quietly instead of raising OnError or writing to the console
+- Perf: frame buffers are pooled and text is encoded straight into the pooled frame buffer. On a loopback echo benchmark against 1.2.0, single-message round trip latency is about 33 percent lower with about 45 percent fewer allocations, and pipelined small messages are 42-65 percent faster with 28-57 percent fewer allocations
+- Fix: sending after the connection is closed throws ChannelClosedException instead of queueing silently until the bounded channel fills and the synchronous Send blocks forever
+- Fix: Send() no longer throws InvalidOperationException when the outgoing channel is full
+- Fix: DataFrame.CreateDataFrame(string) produced a non-final (FIN=0) frame
+- Fix: CreateDataFrame(Stream) used the wrong header length for a short final fragment and dropped the terminating FIN frame when the stream ended exactly on a fragment boundary
+- Fix: WebSocketServer.Stop no longer overwrites the state of a server that was restarted in the meantime
+- Add: the declared payload length is validated from the frame header alone, so non-minimal 16/64-bit length encodings, control frames over 125 bytes and data frames over MaxMessageSize (1009) are refused before any buffer is allocated
+- Add: HTTP handshake lines are capped at 8 KB and headers at 100, the server answers 431
+
+1.2.0:
 - BREAKING: long-standing misspellings in the public API were corrected. Rename call sites as follows: ClientStatus.Opend -&gt; ClientStatus.Opened, OnCloseRecived -&gt; OnCloseReceived, OnPingRecived -&gt; OnPingReceived, OnPongRecived -&gt; OnPongReceived, DataFrame.DataDataFrameFlag -&gt; DataFrame.DataFrameFlag. The old names are gone rather than deprecated, so this is a compile error you fix once, not a silent behaviour change
 - BREAKING (named arguments only): two parameters were renamed - CreateWebSocketClient's timeOUt -&gt; timeOut, and CreateDataFrame's dataDataFrameLength -&gt; dataFrameLength. Positional callers are unaffected
 - BREAKING: IWebSocketClient gained members (the async send methods, MaxMessageSize and OnError), so any third-party implementation of the interface must be updated

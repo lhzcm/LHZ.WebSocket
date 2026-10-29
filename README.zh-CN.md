@@ -24,19 +24,19 @@
 #### Package Manager
 
 ``` bash
-Install-Package LHZ.WebSocket -version 1.2.0
+Install-Package LHZ.WebSocket -version 1.3.0
 ```
 
 #### .NET CLI
 
 ``` bash
-dotnet add package LHZ.WebSocket --Version 1.2.0
+dotnet add package LHZ.WebSocket --Version 1.3.0
 ```
 
 #### Package Reference
 
 ``` xml
-<PackageReference Include="LHZ.WebSocket" Version="1.2.0" />
+<PackageReference Include="LHZ.WebSocket" Version="1.3.0" />
 ```
 
 > **从 1.1.x 升级？** 几个拼错的公开名称已经改正，升级后会报编译错误，按下表重命名调用处即可：

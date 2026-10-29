@@ -24,19 +24,19 @@ A lightweight, zero-dependency WebSocket library for .NET, implementing RFC 6455
 #### Package Manager
 
 ``` bash
-Install-Package LHZ.WebSocket -version 1.2.0
+Install-Package LHZ.WebSocket -version 1.3.0
 ```
 
 #### .NET CLI
 
 ``` bash
-dotnet add package LHZ.WebSocket --Version 1.2.0
+dotnet add package LHZ.WebSocket --Version 1.3.0
 ```
 
 #### Package Reference
 
 ``` xml
-<PackageReference Include="LHZ.WebSocket" Version="1.2.0" />
+<PackageReference Include="LHZ.WebSocket" Version="1.3.0" />
 ```
 
 > **Upgrading from 1.1.x?** Some misspelled public names were corrected, so you will get
