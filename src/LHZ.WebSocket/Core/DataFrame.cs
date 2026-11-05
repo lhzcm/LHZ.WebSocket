@@ -12,6 +12,12 @@ namespace LHZ.WebSocket.Core
     /// Represents a WebSocket data frame as defined in RFC 6455.
     /// Handles masking/unmasking and header serialization.
     /// </summary>
+    /// <remarks>
+    /// The frame owns a buffer rented from <see cref="ArrayPool{T}.Shared"/>; call
+    /// <see cref="Dispose"/> exactly once when done with it. Copies of the struct share the
+    /// buffer but each carries its own disposed flag, so never dispose two copies of the same
+    /// frame: that would return the buffer to the pool twice.
+    /// </remarks>
     public struct DataFrame : IDisposable
     {
         // Frame layout (RFC 6455 Section 5.2):
@@ -260,41 +266,67 @@ namespace LHZ.WebSocket.Core
         {
             int headerLength = GetHeaderLength(payloadMaxLength, maskingKey != 0);
             byte[] buffer = ArrayPool<byte>.Shared.Rent(payloadMaxLength + headerLength);
+            // True while this iterator still owns `buffer`. Once a frame has been yielded the
+            // caller owns that buffer (and must dispose the frame), so it must not be returned
+            // here as well.
+            bool ownsBuffer = true;
             int readNums = 0;
-            while (true)
+            try
             {
-                int curReadNums = data.Read(buffer, readNums + headerLength, payloadMaxLength - readNums);
-                // Read finished — emit final frame
-                if (curReadNums == 0)
+                while (true)
                 {
-                    // The terminating frame may have a shorter header than the one reserved for
-                    // a full fragment (for example, a 0-byte payload never needs a 64-bit length).
-                    int curHeaderLength = GetHeaderLength(readNums, maskingKey != 0);
-                    if (readNums == 0)
+                    int curReadNums = data.Read(buffer, readNums + headerLength, payloadMaxLength - readNums);
+                    // Read finished — emit final frame
+                    if (curReadNums == 0)
                     {
-                        // Nothing in this buffer: replace the full-size fragment buffer with a
-                        // small one, so an empty message does not hold a payloadMaxLength array.
-                        ArrayPool<byte>.Shared.Return(buffer);
-                        buffer = ArrayPool<byte>.Shared.Rent(curHeaderLength);
+                        // The terminating frame may have a shorter header than the one reserved for
+                        // a full fragment (for example, a 0-byte payload never needs a 64-bit length).
+                        int curHeaderLength = GetHeaderLength(readNums, maskingKey != 0);
+                        if (readNums == 0)
+                        {
+                            // Nothing in this buffer: replace the full-size fragment buffer with a
+                            // small one, so an empty message does not hold a payloadMaxLength array.
+                            // Rent the replacement first so a failure still leaves the old buffer
+                            // owned (and returned) exactly once.
+                            byte[] emptyFrameBuffer = ArrayPool<byte>.Shared.Rent(curHeaderLength);
+                            ArrayPool<byte>.Shared.Return(buffer);
+                            buffer = emptyFrameBuffer;
+                        }
+                        else if (curHeaderLength != headerLength)
+                        {
+                            // Shift the payload up to the shorter header that will actually be written.
+                            System.Buffer.BlockCopy(buffer, headerLength, buffer, curHeaderLength, readNums);
+                        }
+                        // Always emit a final frame: without it a message that ends exactly on a
+                        // fragment boundary (or an empty message) would never be terminated.
+                        var finalFrame = new DataFrame(buffer, readNums + curHeaderLength, curHeaderLength, true, false, false, false, opcode, maskingKey, maskingKey != 0);
+                        ownsBuffer = false;
+                        yield return finalFrame;
+                        yield break;
                     }
-                    else if (curHeaderLength != headerLength)
+                    readNums += curReadNums;
+                    if (readNums == payloadMaxLength)
                     {
-                        // Shift the payload up to the shorter header that will actually be written.
-                        System.Buffer.BlockCopy(buffer, headerLength, buffer, curHeaderLength, readNums);
+                        // Buffer full — emit non-final fragment
+                        var fragment = new DataFrame(buffer, readNums + headerLength, headerLength, false, false, false, false, opcode, maskingKey, maskingKey != 0);
+                        ownsBuffer = false;
+                        yield return fragment;
+                        // Resuming means the caller had its chance to consume (and dispose) the
+                        // fragment; never reuse that buffer, take a fresh one instead.
+                        buffer = ArrayPool<byte>.Shared.Rent(payloadMaxLength + headerLength);
+                        ownsBuffer = true;
+                        opcode = OpCode.Continuation;
+                        readNums = 0;
                     }
-                    // Always emit a final frame: without it a message that ends exactly on a
-                    // fragment boundary (or an empty message) would never be terminated.
-                    yield return new DataFrame(buffer, readNums + curHeaderLength, curHeaderLength, true, false, false, false, opcode, maskingKey, maskingKey != 0);
-                    yield break;
                 }
-                readNums += curReadNums;
-                if (readNums == payloadMaxLength)
+            }
+            finally
+            {
+                // Covers abandoning the enumeration early and a throwing source stream: the
+                // buffer of a frame that was never yielded must go back to the pool.
+                if (ownsBuffer)
                 {
-                    // Buffer full — emit non-final fragment
-                    yield return new DataFrame(buffer, readNums + headerLength, headerLength, false, false, false, false, opcode, maskingKey, maskingKey != 0);
-                    opcode = OpCode.Continuation;
-                    buffer = ArrayPool<byte>.Shared.Rent(payloadMaxLength + headerLength);
-                    readNums = 0;
+                    ArrayPool<byte>.Shared.Return(buffer);
                 }
             }
         }
@@ -357,7 +389,8 @@ namespace LHZ.WebSocket.Core
         /// </summary>
         public void Dispose()
         {
-            if(!_disposed)
+            // A default(DataFrame) has no buffer; returning null to the pool would throw.
+            if (!_disposed && _buffer != null)
             {
                 _disposed = true;
                 ArrayPool<byte>.Shared.Return(_buffer);

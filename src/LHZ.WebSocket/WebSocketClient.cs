@@ -305,7 +305,36 @@ namespace LHZ.WebSocket
         /// <summary>Enqueues an already built frame without blocking, taking ownership of its pooled buffer.</summary>
         private Task SendAsync(DataFrame dataFrame, CancellationToken cancellationToken)
         {
-            return _channel.Writer.WriteAsync(dataFrame, cancellationToken).AsTask();
+            ValueTask write;
+            try
+            {
+                write = _channel.Writer.WriteAsync(dataFrame, cancellationToken);
+            }
+            catch
+            {
+                // The frame never reached the channel, so its pooled buffer is still ours.
+                dataFrame.Dispose();
+                throw;
+            }
+            return AwaitWriteAsync(write, dataFrame);
+        }
+
+        /// <summary>
+        /// Completes the hand-off of a frame to the channel. Ownership only moves once the write
+        /// succeeds: a write cancelled while the queue is full is never accepted, so the frame
+        /// must still be disposed or its pooled buffer is lost.
+        /// </summary>
+        private static async Task AwaitWriteAsync(ValueTask write, DataFrame dataFrame)
+        {
+            try
+            {
+                await write.ConfigureAwait(false);
+            }
+            catch
+            {
+                dataFrame.Dispose();
+                throw;
+            }
         }
 
         /// <summary>
@@ -330,7 +359,11 @@ namespace LHZ.WebSocket
                     reason?.CopyTo(payload, 2);
                 }
                 var dataFrame = DataFrame.CreateDataFrame(OpCode.Close, true, payload, NextMaskingKey());
-                _channel.Writer.TryWrite(dataFrame);
+                if (!_channel.Writer.TryWrite(dataFrame))
+                {
+                    // The queue is full or already completed; the frame never entered it.
+                    dataFrame.Dispose();
+                }
             }
             catch (Exception ex)
             {
@@ -515,84 +548,97 @@ namespace LHZ.WebSocket
         {
             Task.Run(async () =>
             {
+                // Fragments of the message currently being reassembled. Declared outside the
+                // try so the finally can return their pooled buffers on every exit path.
+                List<DataFrame> dataFrames = new List<DataFrame>();
+                long fragmentedLength = 0;
                 try
                 {
                     // The reader consults MaxMessageSize per frame, so an oversized frame is
                     // refused from its header alone, before any memory is committed to it.
                     var dataFrameReader = new DataFrameReader(_networkStream, () => MaxMessageSize);
-                    List<DataFrame> dataFrames = new List<DataFrame>();
-                    long fragmentedLength = 0;
                     await foreach (var item in dataFrameReader.ReadAsync(_cts.Token))
                     {
-                        if (_cts.Token.IsCancellationRequested)
+                        // Ownership of `item` starts with this iteration and ends either in the
+                        // finally below or when the frame joins the reassembly list.
+                        bool queued = false;
+                        try
                         {
-                            break;
-                        }
-
-                        ValidateFrame(item);
-
-                        // Control frames (Ping/Pong/Close) must not be fragmented and are
-                        // handled immediately; they never participate in message reassembly
-                        // (RFC 6455 §5.4, §5.5).
-                        if (item.Opcode == OpCode.Ping || item.Opcode == OpCode.Pong || item.Opcode == OpCode.Close)
-                        {
-                            if (!item.FIN)
+                            if (_cts.Token.IsCancellationRequested)
                             {
-                                throw new WebSocketProtocolException(CloseCode.ProtocolError, "Control frame must not be fragmented");
+                                break;
                             }
-                            // A control frame payload is capped at 125 bytes (RFC 6455 §5.5).
-                            if (item.Data.Length > 125)
-                            {
-                                throw new WebSocketProtocolException(CloseCode.ProtocolError, "Control frame payload must not exceed 125 bytes");
-                            }
-                            ReceiveProcessing(item.Opcode, item.RSV1, item.RSV2, item.RSV3, ToArray(item.Data));
-                            item.Dispose();
-                            continue;
-                        }
 
-                        // Continuation frame without a fragmented message in progress is a protocol error.
-                        if (item.Opcode == OpCode.Continuation)
-                        {
-                            if (dataFrames.Count == 0)
+                            ValidateFrame(item);
+
+                            // Control frames (Ping/Pong/Close) must not be fragmented and are
+                            // handled immediately; they never participate in message reassembly
+                            // (RFC 6455 §5.4, §5.5).
+                            if (item.Opcode == OpCode.Ping || item.Opcode == OpCode.Pong || item.Opcode == OpCode.Close)
                             {
-                                throw new WebSocketProtocolException(CloseCode.ProtocolError, "Continuation frame received without a started message");
+                                if (!item.FIN)
+                                {
+                                    throw new WebSocketProtocolException(CloseCode.ProtocolError, "Control frame must not be fragmented");
+                                }
+                                // A control frame payload is capped at 125 bytes (RFC 6455 §5.5).
+                                if (item.Data.Length > 125)
+                                {
+                                    throw new WebSocketProtocolException(CloseCode.ProtocolError, "Control frame payload must not exceed 125 bytes");
+                                }
+                                ReceiveProcessing(item.Opcode, item.RSV1, item.RSV2, item.RSV3, ToArray(item.Data));
+                                continue;
                             }
-                            fragmentedLength += item.Data.Length;
-                            EnforceMaxMessageSize(fragmentedLength);
-                            dataFrames.Add(item);
+
+                            // Continuation frame without a fragmented message in progress is a protocol error.
+                            if (item.Opcode == OpCode.Continuation)
+                            {
+                                if (dataFrames.Count == 0)
+                                {
+                                    throw new WebSocketProtocolException(CloseCode.ProtocolError, "Continuation frame received without a started message");
+                                }
+                                fragmentedLength += item.Data.Length;
+                                EnforceMaxMessageSize(fragmentedLength);
+                                dataFrames.Add(item);
+                                queued = true;
+                                if (item.FIN)
+                                {
+                                    ReceiveFragmentedMessage(dataFrames);
+                                    // The reassembled message is a copy; the fragments can go back to the pool.
+                                    DisposeFrames(dataFrames);
+                                    fragmentedLength = 0;
+                                }
+                                continue;
+                            }
+
+                            // A new Text/Binary frame while a fragmented message is still in progress
+                            // is a protocol error (RFC 6455 §5.4).
+                            if (dataFrames.Count > 0)
+                            {
+                                throw new WebSocketProtocolException(CloseCode.ProtocolError, "New data frame received while a fragmented message is in progress");
+                            }
+
+                            EnforceMaxMessageSize(item.Data.Length);
+
+                            // Data frame: single-frame message or the start of a fragmented one.
                             if (item.FIN)
                             {
-                                ReceiveFragmentedMessage(dataFrames);
-                                // The reassembled message is a copy; the fragments can go back to the pool.
-                                foreach (var frame in dataFrames)
-                                {
-                                    frame.Dispose();
-                                }
-                                dataFrames.Clear();
-                                fragmentedLength = 0;
+                                ReceiveProcessing(item.Opcode, item.RSV1, item.RSV2, item.RSV3, ToArray(item.Data));
                             }
-                            continue;
+                            else
+                            {
+                                fragmentedLength = item.Data.Length;
+                                dataFrames.Add(item);
+                                queued = true;
+                            }
                         }
-
-                        // A new Text/Binary frame while a fragmented message is still in progress
-                        // is a protocol error (RFC 6455 §5.4).
-                        if (dataFrames.Count > 0)
+                        finally
                         {
-                            throw new WebSocketProtocolException(CloseCode.ProtocolError, "New data frame received while a fragmented message is in progress");
-                        }
-
-                        EnforceMaxMessageSize(item.Data.Length);
-
-                        // Data frame: single-frame message or the start of a fragmented one.
-                        if (item.FIN)
-                        {
-                            ReceiveProcessing(item.Opcode, item.RSV1, item.RSV2, item.RSV3, ToArray(item.Data));
-                            item.Dispose();
-                        }
-                        else
-                        {
-                            fragmentedLength = item.Data.Length;
-                            dataFrames.Add(item);
+                            // Not part of a fragmented message: this iteration owns the frame.
+                            // A queued fragment is disposed with the rest of the message.
+                            if (!queued)
+                            {
+                                item.Dispose();
+                            }
                         }
                     }
                 }
@@ -617,7 +663,27 @@ namespace LHZ.WebSocket
                     }
                     Teardown();
                 }
+                finally
+                {
+                    // A message that was still being reassembled (or failed validation) is
+                    // never dispatched, but its pooled buffers are still ours to return.
+                    DisposeFrames(dataFrames);
+                }
             });
+        }
+
+        /// <summary>
+        /// Returns every fragment of a message to the pool. Disposing via the list index is
+        /// intentional: <see cref="DataFrame"/> is a struct, so a foreach copy would not be the
+        /// element that stays in the list.
+        /// </summary>
+        private static void DisposeFrames(List<DataFrame> dataFrames)
+        {
+            for (int i = 0; i < dataFrames.Count; i++)
+            {
+                dataFrames[i].Dispose();
+            }
+            dataFrames.Clear();
         }
 
         /// <summary>
@@ -818,8 +884,13 @@ namespace LHZ.WebSocket
                         // same payload. Queued without blocking; dropped if the queue is full.
                         try
                         {
-                            var pong = DataFrame.CreateDataFrame(OpCode.Pong, true, (byte[])data.Clone(), NextMaskingKey());
-                            _channel.Writer.TryWrite(pong);
+                            var pong = DataFrame.CreateDataFrame(OpCode.Pong, true, data, NextMaskingKey());
+                            if (!_channel.Writer.TryWrite(pong))
+                            {
+                                // The queue is full or already completed; drop the reply but
+                                // return its pooled buffer.
+                                pong.Dispose();
+                            }
                         }
                         catch (Exception ex)
                         {

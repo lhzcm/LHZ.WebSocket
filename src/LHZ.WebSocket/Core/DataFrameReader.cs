@@ -144,10 +144,18 @@ namespace LHZ.WebSocket.Core
                 headerLength += 4;
             }
             var buffer = ArrayPool<byte>.Shared.Rent(payloadLength + headerLength);
-            //Fill payload in one read to avoid multiple reads from the stream.
-            StreamReadExact(buffer, headerLength, payloadLength);
-
-            return DataFrame.CreateDataFrame(buffer, payloadLength + headerLength, headerLength, header[0], maskingKey, masked);
+            try
+            {
+                //Fill payload in one read to avoid multiple reads from the stream.
+                StreamReadExact(buffer, headerLength, payloadLength);
+                return DataFrame.CreateDataFrame(buffer, payloadLength + headerLength, headerLength, header[0], maskingKey, masked);
+            }
+            catch
+            {
+                // A truncated frame must not strand the pooled buffer.
+                ArrayPool<byte>.Shared.Return(buffer);
+                throw;
+            }
         }
 
         /// <summary>
